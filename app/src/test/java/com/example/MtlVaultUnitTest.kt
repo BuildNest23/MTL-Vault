@@ -9,6 +9,7 @@ import com.example.importexport.NovelWithChaptersBackup
 import com.example.replacement.ReplacementEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -287,5 +288,105 @@ class MtlVaultUnitTest {
         } finally {
             tempFile.delete()
         }
+    }
+
+    @Test
+    fun testEpubContainerStructureCompliance() {
+        val novel = NovelEntity(
+            id = "n_urdu",
+            title = "داستان امیر حمزہ",
+            author = "غالب",
+            description = "ایک کلاسیکی داستان"
+        )
+        val ch1 = ChapterEntity(
+            id = "c_u1",
+            novelId = "n_urdu",
+            orderIndex = 0,
+            title = "پہلا باب: آغاز داستان",
+            content = "یہ داستان طلسم ہوشربا کے واقعات پر مبنی ہے۔\n\nامیر حمزہ میدان میں تشریف لائے۔",
+            wordCount = 12
+        )
+
+        val tempFile = java.io.File.createTempFile("urdu_test", ".epub")
+        try {
+            tempFile.outputStream().use { out ->
+                com.example.importexport.EpubExporter.exportToEpub(novel, listOf(ch1), out)
+            }
+
+            val zip = java.util.zip.ZipFile(tempFile)
+            val entries = zip.entries().toList()
+
+            // 1. First entry MUST be mimetype
+            val firstEntry = entries.first()
+            assertEquals("mimetype", firstEntry.name)
+            assertEquals(java.util.zip.ZipEntry.STORED, firstEntry.method)
+            assertEquals(20L, firstEntry.size)
+            assertEquals("application/epub+zip", String(zip.getInputStream(firstEntry).readBytes(), Charsets.US_ASCII))
+
+            // 2. Mandatory container and documents exist
+            assertNotNull(zip.getEntry("META-INF/container.xml"))
+            assertNotNull(zip.getEntry("OEBPS/content.opf"))
+            assertNotNull(zip.getEntry("OEBPS/stylesheet.css"))
+            assertNotNull(zip.getEntry("OEBPS/nav.xhtml"))
+            assertNotNull(zip.getEntry("OEBPS/toc.ncx"))
+            assertNotNull(zip.getEntry("OEBPS/ch_1.xhtml"))
+
+            // 3. Inspect chapter XHTML for RTL direction
+            val ch1Content = String(zip.getInputStream(zip.getEntry("OEBPS/ch_1.xhtml")).readBytes(), Charsets.UTF_8)
+            assertTrue(ch1Content.contains("dir=\"rtl\""))
+            assertTrue(ch1Content.contains("<!DOCTYPE html>"))
+
+            // 4. Inspect nav.xhtml
+            val navContent = String(zip.getInputStream(zip.getEntry("OEBPS/nav.xhtml")).readBytes(), Charsets.UTF_8)
+            assertTrue(navContent.contains("epub:type=\"toc\""))
+
+            zip.close()
+        } finally {
+            tempFile.delete()
+        }
+    }
+
+    @Test
+    fun testAutomaticChapterNumberingLogic() {
+        val chapterPattern = Regex("""(?i)\b(?:chapter|ch|chapitre|capitulo|capítulo|ch\.)\s*(\d+)\b""")
+        val fallbackNumberPattern = Regex("""\b(\d+)\b""")
+
+        fun determineNextTitle(titles: List<String>): String {
+            if (titles.isEmpty()) return "Chapter 1"
+            var highestNumber: Int? = null
+            for (title in titles) {
+                val chapterMatch = chapterPattern.find(title)
+                val num = if (chapterMatch != null) {
+                    chapterMatch.groupValues[1].toIntOrNull()
+                } else {
+                    fallbackNumberPattern.findAll(title)
+                        .mapNotNull { it.groupValues[1].toIntOrNull() }
+                        .maxOrNull()
+                }
+                if (num != null) {
+                    if (highestNumber == null || num > highestNumber) {
+                        highestNumber = num
+                    }
+                }
+            }
+            val nextNum = if (highestNumber != null) highestNumber + 1 else titles.size + 1
+            return "Chapter $nextNum"
+        }
+
+        // Empty list -> Chapter 1
+        assertEquals("Chapter 1", determineNextTitle(emptyList()))
+
+        // 1, 2, 3, 10 -> Chapter 11
+        assertEquals("Chapter 11", determineNextTitle(listOf("Chapter 1", "Chapter 2", "Chapter 3", "Chapter 10")))
+
+        // Highest 25 -> Chapter 26
+        assertEquals("Chapter 26", determineNextTitle(listOf("Chapter 1", "Chapter 25")))
+
+        // Novel with 2448, 2449 -> Chapter 2450
+        assertEquals("Chapter 2450", determineNextTitle(listOf("Chapter 2448", "Chapter 2449")))
+
+        // Various formats: "Ch. 5", "Episode 9"
+        assertEquals("Chapter 6", determineNextTitle(listOf("Ch. 5")))
+        assertEquals("Chapter 10", determineNextTitle(listOf("Episode 9")))
     }
 }

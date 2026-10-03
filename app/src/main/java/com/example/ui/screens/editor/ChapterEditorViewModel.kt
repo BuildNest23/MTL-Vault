@@ -49,13 +49,8 @@ class ChapterEditorViewModel(
                     _wordCount.value = existing.wordCount
                 }
             } else {
-                // Auto-suggest next chapter title
-                val novel = repository.getNovelByIdSync(novelId)
-                val chapters = repository.getNovelByIdSync(novelId)?.let {
-                    // Next title logic
-                    "Chapter " + (it.lastChapterId?.let { 1 } ?: 1)
-                } ?: "Chapter 1"
-                _title.value = chapters
+                val nextTitle = repository.getNextDefaultChapterTitle(novelId)
+                _title.value = nextTitle
             }
         }
     }

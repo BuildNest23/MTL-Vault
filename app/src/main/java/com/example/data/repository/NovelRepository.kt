@@ -255,6 +255,43 @@ class NovelRepository(
         sb.toString()
     }
 
+    suspend fun getNextDefaultChapterTitle(novelId: String): String = withContext(Dispatchers.IO) {
+        val chapters = chapterDao.getChaptersForNovelSync(novelId)
+        if (chapters.isEmpty()) {
+            return@withContext "Chapter 1"
+        }
+
+        var highestNumber: Int? = null
+        val chapterPattern = Regex("""(?i)\b(?:chapter|ch|chapitre|capitulo|capítulo|ch\.)\s*(\d+)\b""")
+        val fallbackNumberPattern = Regex("""\b(\d+)\b""")
+
+        for (chapter in chapters) {
+            val title = chapter.title
+            val chapterMatch = chapterPattern.find(title)
+            val num = if (chapterMatch != null) {
+                chapterMatch.groupValues[1].toIntOrNull()
+            } else {
+                fallbackNumberPattern.findAll(title)
+                    .mapNotNull { it.groupValues[1].toIntOrNull() }
+                    .maxOrNull()
+            }
+
+            if (num != null) {
+                if (highestNumber == null || num > highestNumber) {
+                    highestNumber = num
+                }
+            }
+        }
+
+        val nextNum = if (highestNumber != null) {
+            highestNumber + 1
+        } else {
+            chapters.size + 1
+        }
+
+        "Chapter $nextNum"
+    }
+
     suspend fun getFullBackupJson(): String = withContext(Dispatchers.IO) {
         val novels = novelDao.getAllNovels().first()
         val backupItems = novels.map { novel ->

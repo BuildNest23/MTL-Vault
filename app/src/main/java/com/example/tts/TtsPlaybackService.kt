@@ -8,9 +8,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.MediaMetadata
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.IBinder
-import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.MtlVaultApplication
 import kotlinx.coroutines.CoroutineScope
@@ -23,9 +25,10 @@ class TtsPlaybackService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var observerJob: Job? = null
+    private var mediaSession: MediaSession? = null
 
     companion object {
-        const val CHANNEL_ID = "tts_playback_channel"
+        const val CHANNEL_ID = "tts_media_channel"
         const val NOTIFICATION_ID = 1001
 
         const val ACTION_START = "com.example.tts.ACTION_START"
@@ -59,7 +62,42 @@ class TtsPlaybackService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        setupMediaSession()
         observeTtsManager()
+    }
+
+    private fun setupMediaSession() {
+        val ttsManager = (application as? MtlVaultApplication)?.ttsManager
+        mediaSession = MediaSession(this, "MtlVaultMediaSession").apply {
+            setCallback(object : MediaSession.Callback() {
+                override fun onPlay() {
+                    ttsManager?.resume()
+                }
+
+                override fun onPause() {
+                    ttsManager?.pause()
+                }
+
+                override fun onSkipToNext() {
+                    ttsManager?.nextChunk()
+                }
+
+                override fun onSkipToPrevious() {
+                    ttsManager?.previousChunk()
+                }
+
+                override fun onStop() {
+                    ttsManager?.stop()
+                    stopForegroundNotification()
+                    stopSelf()
+                }
+
+                override fun onSeekTo(pos: Long) {
+                    ttsManager?.seekToChunk(pos.toInt())
+                }
+            })
+            isActive = true
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -67,12 +105,10 @@ class TtsPlaybackService : Service() {
 
         when (intent?.action) {
             ACTION_START -> {
-                val notification = buildNotification(ttsManager?.playbackInfo?.value ?: TtsPlaybackInfo())
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-                } else {
-                    startForeground(NOTIFICATION_ID, notification)
-                }
+                val info = ttsManager?.playbackInfo?.value ?: TtsPlaybackInfo()
+                updateMediaSessionState(info)
+                val notification = buildNotification(info)
+                startForegroundCompat(notification)
             }
             ACTION_TOGGLE -> {
                 val state = ttsManager?.playbackInfo?.value?.state
@@ -100,10 +136,21 @@ class TtsPlaybackService : Service() {
                 stopSelf()
             }
             ACTION_UPDATE -> {
-                ttsManager?.playbackInfo?.value?.let { updateNotification(it) }
+                ttsManager?.playbackInfo?.value?.let { info ->
+                    updateMediaSessionState(info)
+                    updateNotification(info)
+                }
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun startForegroundCompat(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun observeTtsManager() {
@@ -111,6 +158,7 @@ class TtsPlaybackService : Service() {
         observerJob?.cancel()
         observerJob = serviceScope.launch {
             ttsManager.playbackInfo.collectLatest { info ->
+                updateMediaSessionState(info)
                 if (info.state == TtsState.PLAYING || info.state == TtsState.PAUSED) {
                     updateNotification(info)
                 } else if (info.state == TtsState.IDLE || info.state == TtsState.ERROR) {
@@ -121,14 +169,59 @@ class TtsPlaybackService : Service() {
         }
     }
 
+    private fun updateMediaSessionState(info: TtsPlaybackInfo) {
+        val session = mediaSession ?: return
+        val state = when (info.state) {
+            TtsState.PLAYING -> PlaybackState.STATE_PLAYING
+            TtsState.PAUSED -> PlaybackState.STATE_PAUSED
+            TtsState.IDLE -> PlaybackState.STATE_STOPPED
+            else -> PlaybackState.STATE_NONE
+        }
+
+        val actions = PlaybackState.ACTION_PLAY or
+                PlaybackState.ACTION_PAUSE or
+                PlaybackState.ACTION_PLAY_PAUSE or
+                PlaybackState.ACTION_SKIP_TO_NEXT or
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackState.ACTION_STOP or
+                PlaybackState.ACTION_SEEK_TO
+
+        val playbackSpeed = if (info.state == TtsState.PLAYING) 1.0f else 0.0f
+
+        val playbackState = PlaybackState.Builder()
+            .setActions(actions)
+            .setState(state, info.currentChunkIndex.toLong(), playbackSpeed)
+            .build()
+
+        session.setPlaybackState(playbackState)
+
+        val title = if (info.chapterTitle.isNotBlank()) info.chapterTitle else "MTL Vault Reader"
+        val subtitle = if (info.totalChunks > 0) {
+            "Paragraph ${info.currentChunkIndex + 1} of ${info.totalChunks}"
+        } else {
+            "Audiobook & Novel Reader"
+        }
+
+        val metadata = MediaMetadata.Builder()
+            .putString(MediaMetadata.METADATA_KEY_TITLE, title)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, "MTL Vault")
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, "Novel Speech")
+            .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, title)
+            .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, subtitle)
+            .putLong(MediaMetadata.METADATA_KEY_DURATION, info.totalChunks.coerceAtLeast(1).toLong())
+            .build()
+
+        session.setMetadata(metadata)
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "TTS Playback",
+                "Audiobook & TTS Playback",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows playback controls for Text-to-Speech"
+                description = "Shows real Android system media player controls and lock-screen controls"
                 setShowBadge(false)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
@@ -187,25 +280,65 @@ class TtsPlaybackService : Service() {
         val subtitle = if (info.totalChunks > 0) {
             "Paragraph ${info.currentChunkIndex + 1} of ${info.totalChunks}"
         } else {
-            "Reading novel"
+            "Audiobook & Novel Reader"
         }
 
-        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+
+        builder
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(title)
             .setContentText(subtitle)
             .setContentIntent(openAppPendingIntent)
             .setOngoing(isPlaying)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(android.R.drawable.ic_media_previous, "Prev", prevPendingIntent)
-            .addAction(
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+
+        // Attach system MediaStyle with active MediaSession token
+        val sessionToken = mediaSession?.sessionToken
+        if (sessionToken != null) {
+            val mediaStyle = Notification.MediaStyle()
+                .setMediaSession(sessionToken)
+                .setShowActionsInCompactView(0, 1, 2)
+            builder.style = mediaStyle
+        }
+
+        // Actions: 0 = Prev, 1 = Play/Pause, 2 = Next, 3 = Stop
+        builder.addAction(
+            Notification.Action.Builder(
+                android.R.drawable.ic_media_previous,
+                "Previous",
+                prevPendingIntent
+            ).build()
+        )
+
+        builder.addAction(
+            Notification.Action.Builder(
                 if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
                 if (isPlaying) "Pause" else "Play",
                 togglePendingIntent
-            )
-            .addAction(android.R.drawable.ic_media_next, "Next", nextPendingIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
+            ).build()
+        )
+
+        builder.addAction(
+            Notification.Action.Builder(
+                android.R.drawable.ic_media_next,
+                "Next",
+                nextPendingIntent
+            ).build()
+        )
+
+        builder.addAction(
+            Notification.Action.Builder(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "Stop",
+                stopPendingIntent
+            ).build()
+        )
 
         return builder.build()
     }
@@ -222,6 +355,9 @@ class TtsPlaybackService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         observerJob?.cancel()
+        mediaSession?.isActive = false
+        mediaSession?.release()
+        mediaSession = null
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
