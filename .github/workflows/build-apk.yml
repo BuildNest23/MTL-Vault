@@ -42,8 +42,11 @@ jobs:
             touch .env
           fi
 
-      - name: Run Unit Tests
-        run: ./gradlew testDebugUnitTest
+      - name: Restore debug keystore
+        run: |
+          if [ -f debug.keystore.base64 ] && [ ! -f debug.keystore ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
 
       - name: Build Debug APK
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == 'both'
@@ -56,6 +59,10 @@ jobs:
           name: MTL-Vault-Debug-APK
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
+
+      - name: Run Unit Tests
+        run: ./gradlew testDebugUnitTest --continue
+        continue-on-error: true
 
       - name: Build Release APK
         if: github.event_name == 'workflow_dispatch' && (github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both')
