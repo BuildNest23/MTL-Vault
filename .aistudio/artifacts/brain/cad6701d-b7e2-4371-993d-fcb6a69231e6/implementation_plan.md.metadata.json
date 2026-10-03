@@ -1,0 +1,6 @@
+{
+  "summary":  "Complete architectural blueprint and implementation plan for MTL Vault, a native Android novel reading and offline library app inspired by ClassGrid's design language, featuring Room local storage, native Android TextToSpeech with intelligent chunking, full Unicode chapter import, and per-novel regex/text replacement rules.",
+  "updatedAt":  "2026-10-03T18:19:36.028579371Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

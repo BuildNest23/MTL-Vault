@@ -1,0 +1,269 @@
+package com.example.data.repository
+
+import com.example.data.database.ChapterDao
+import com.example.data.database.NovelDao
+import com.example.data.database.entities.ChapterEntity
+import com.example.data.database.entities.NovelEntity
+import com.example.data.model.ChapterSummary
+import com.example.data.model.NovelSummary
+import com.example.data.preferences.SettingsDataStore
+import com.example.importexport.BackupData
+import com.example.importexport.BackupRestoreManager
+import com.example.importexport.ChapterSplitter
+import com.example.importexport.NovelWithChaptersBackup
+import com.example.importexport.SplitChapterResult
+import com.example.replacement.ReplacementEngine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import java.util.UUID
+
+class NovelRepository(
+    private val novelDao: NovelDao,
+    private val chapterDao: ChapterDao,
+    private val settingsDataStore: SettingsDataStore
+) {
+
+    fun getNovelSummaries(): Flow<List<NovelSummary>> {
+        return novelDao.getAllNovels().combine(chapterDao.getTotalChapterCount()) { novels, _ ->
+            novels.map { novel ->
+                val total = chapterDao.getChapterCountForNovel(novel.id)
+                val read = chapterDao.getReadChapterCountForNovel(novel.id)
+                val words = chapterDao.getWordCountForNovel(novel.id)
+                val lastChapter = novel.lastChapterId?.let { chapterDao.getChapterByIdSync(it) }
+
+                NovelSummary(
+                    id = novel.id,
+                    title = novel.title,
+                    author = novel.author,
+                    translator = novel.translator,
+                    description = novel.description,
+                    coverUri = novel.coverUri,
+                    lastChapterId = novel.lastChapterId,
+                    replacements = novel.replacements,
+                    replacementsEnabled = novel.replacementsEnabled,
+                    createdAt = novel.createdAt,
+                    updatedAt = novel.updatedAt,
+                    totalChapters = total,
+                    readChapters = read,
+                    totalWords = words,
+                    lastChapterTitle = lastChapter?.title
+                )
+            }
+        }
+    }
+
+    fun getNovelById(novelId: String): Flow<NovelEntity?> = novelDao.getNovelById(novelId)
+
+    suspend fun getNovelByIdSync(novelId: String): NovelEntity? = novelDao.getNovelByIdSync(novelId)
+
+    fun getChapterSummaries(novelId: String): Flow<List<ChapterSummary>> = chapterDao.getChapterSummaries(novelId)
+
+    fun getChapterById(chapterId: String): Flow<ChapterEntity?> = chapterDao.getChapterById(chapterId)
+
+    suspend fun getChapterByIdSync(chapterId: String): ChapterEntity? = chapterDao.getChapterByIdSync(chapterId)
+
+    suspend fun getNextChapter(novelId: String, currentOrder: Int): ChapterEntity? =
+        chapterDao.getNextChapter(novelId, currentOrder)
+
+    suspend fun getPrevChapter(novelId: String, currentOrder: Int): ChapterEntity? =
+        chapterDao.getPrevChapter(novelId, currentOrder)
+
+    suspend fun createNovel(
+        title: String,
+        author: String = "",
+        translator: String = "",
+        description: String = ""
+    ): String = withContext(Dispatchers.IO) {
+        val id = "n_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().take(4)
+        val novel = NovelEntity(
+            id = id,
+            title = title.trim(),
+            author = author.trim(),
+            translator = translator.trim(),
+            description = description.trim(),
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis()
+        )
+        novelDao.insertNovel(novel)
+        id
+    }
+
+    suspend fun updateNovel(novel: NovelEntity) = withContext(Dispatchers.IO) {
+        novelDao.updateNovel(novel.copy(updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun deleteNovel(novelId: String) = withContext(Dispatchers.IO) {
+        novelDao.deleteNovelById(novelId)
+    }
+
+    suspend fun addChapter(novelId: String, title: String, content: String): String = withContext(Dispatchers.IO) {
+        val maxOrder = chapterDao.getMaxOrderIndex(novelId) ?: -1
+        val newOrder = maxOrder + 1
+        val id = "c_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().take(4)
+        val wc = ChapterSplitter.countWords(content)
+        val chapter = ChapterEntity(
+            id = id,
+            novelId = novelId,
+            orderIndex = newOrder,
+            title = title.ifBlank { "Chapter ${newOrder + 1}" },
+            content = content,
+            wordCount = wc,
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis()
+        )
+        chapterDao.insertChapter(chapter)
+        novelDao.updateLastChapter(novelId, id, System.currentTimeMillis())
+        id
+    }
+
+    suspend fun updateChapter(chapter: ChapterEntity) = withContext(Dispatchers.IO) {
+        val wc = ChapterSplitter.countWords(chapter.content)
+        chapterDao.updateChapter(chapter.copy(wordCount = wc, updatedAt = System.currentTimeMillis()))
+        novelDao.updateLastChapter(chapter.novelId, chapter.id, System.currentTimeMillis())
+    }
+
+    suspend fun deleteChapter(novelId: String, chapterId: String) = withContext(Dispatchers.IO) {
+        chapterDao.deleteChapterById(chapterId)
+        val novel = novelDao.getNovelByIdSync(novelId)
+        if (novel?.lastChapterId == chapterId) {
+            novelDao.updateLastChapter(novelId, null, System.currentTimeMillis())
+        }
+    }
+
+    suspend fun toggleChapterRead(chapterId: String) = withContext(Dispatchers.IO) {
+        val chapter = chapterDao.getChapterByIdSync(chapterId) ?: return@withContext
+        val newRead = !chapter.read
+        chapterDao.updateReadStatus(chapterId, newRead, if (newRead) System.currentTimeMillis() else null)
+    }
+
+    suspend fun setChapterRead(chapterId: String, read: Boolean) = withContext(Dispatchers.IO) {
+        chapterDao.updateReadStatus(chapterId, read, if (read) System.currentTimeMillis() else null)
+    }
+
+    suspend fun updateScrollPosition(chapterId: String, position: Int) = withContext(Dispatchers.IO) {
+        chapterDao.updateScrollPosition(chapterId, position)
+    }
+
+    suspend fun updateLastChapter(novelId: String, chapterId: String) = withContext(Dispatchers.IO) {
+        novelDao.updateLastChapter(novelId, chapterId, System.currentTimeMillis())
+    }
+
+    suspend fun updateReplacements(novelId: String, rules: String, enabled: Boolean) = withContext(Dispatchers.IO) {
+        novelDao.updateReplacements(novelId, rules, enabled, System.currentTimeMillis())
+    }
+
+    suspend fun importChapters(novelId: String, chapters: List<SplitChapterResult>): Int = withContext(Dispatchers.IO) {
+        val currentMaxOrder = chapterDao.getMaxOrderIndex(novelId) ?: -1
+        var nextOrder = currentMaxOrder + 1
+        val entities = chapters.map { ch ->
+            ChapterEntity(
+                id = "c_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().take(6),
+                novelId = novelId,
+                orderIndex = nextOrder++,
+                title = ch.title,
+                content = ch.content,
+                wordCount = ch.wordCount,
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis()
+            )
+        }
+        chapterDao.insertChapters(entities)
+        novelDao.updateLastChapter(novelId, entities.lastOrNull()?.id, System.currentTimeMillis())
+        entities.size
+    }
+
+    suspend fun getRenderedChapterContent(novelId: String, chapter: ChapterEntity): String = withContext(Dispatchers.Default) {
+        val novel = novelDao.getNovelByIdSync(novelId)
+        val settings = settingsDataStore.settingsFlow.first()
+        if (novel != null && novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()) {
+            val rules = ReplacementEngine.parseRules(novel.replacements)
+            ReplacementEngine.applyRules(chapter.content, rules)
+        } else {
+            chapter.content
+        }
+    }
+
+    suspend fun exportChapterAsText(novelId: String, chapterId: String): String = withContext(Dispatchers.Default) {
+        val chapter = chapterDao.getChapterByIdSync(chapterId) ?: return@withContext ""
+        val content = getRenderedChapterContent(novelId, chapter)
+        "${chapter.title}\n\n$content"
+    }
+
+    suspend fun exportNovelAsText(novelId: String): String = withContext(Dispatchers.Default) {
+        val novel = novelDao.getNovelByIdSync(novelId) ?: return@withContext ""
+        val chapters = chapterDao.getChaptersForNovelSync(novelId)
+        val sb = StringBuilder()
+        sb.append(novel.title).append("\n")
+        if (novel.author.isNotBlank()) sb.append("by ").append(novel.author).append("\n")
+        if (novel.translator.isNotBlank()) sb.append("translated by ").append(novel.translator).append("\n")
+        sb.append("\n\n")
+
+        val settings = settingsDataStore.settingsFlow.first()
+        val rules = if (novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()) {
+            ReplacementEngine.parseRules(novel.replacements)
+        } else {
+            emptyList()
+        }
+
+        for (ch in chapters) {
+            val content = if (rules.isNotEmpty()) ReplacementEngine.applyRules(ch.content, rules) else ch.content
+            sb.append(ch.title).append("\n\n").append(content).append("\n\n\n")
+        }
+        sb.toString()
+    }
+
+    suspend fun exportChaptersAsText(novelId: String, chapterIds: List<String>): String = withContext(Dispatchers.Default) {
+        val novel = novelDao.getNovelByIdSync(novelId) ?: return@withContext ""
+        val chapters = chapterDao.getChaptersByIdsSync(chapterIds)
+        val settings = settingsDataStore.settingsFlow.first()
+        val rules = if (novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()) {
+            ReplacementEngine.parseRules(novel.replacements)
+        } else {
+            emptyList()
+        }
+
+        val sb = StringBuilder()
+        for (ch in chapters) {
+            val content = if (rules.isNotEmpty()) ReplacementEngine.applyRules(ch.content, rules) else ch.content
+            sb.append(ch.title).append("\n\n").append(content).append("\n\n\n")
+        }
+        sb.toString()
+    }
+
+    suspend fun getFullBackupJson(): String = withContext(Dispatchers.IO) {
+        val novels = novelDao.getAllNovels().first()
+        val backupItems = novels.map { novel ->
+            val chapters = chapterDao.getChaptersForNovelSync(novel.id)
+            NovelWithChaptersBackup(novel, chapters)
+        }
+        val settings = settingsDataStore.settingsFlow.first()
+        BackupRestoreManager.generateBackupJson(backupItems, settings)
+    }
+
+    suspend fun restoreFromBackupJson(jsonString: String) = withContext(Dispatchers.IO) {
+        val backupData = BackupRestoreManager.parseBackupJson(jsonString)
+        novelDao.deleteAllNovels() // Cascade deletes all chapters
+        for (item in backupData.novels) {
+            novelDao.insertNovel(item.novel)
+            if (item.chapters.isNotEmpty()) {
+                chapterDao.insertChapters(item.chapters)
+            }
+        }
+        backupData.settings?.let {
+            settingsDataStore.saveAllSettings(it)
+        }
+    }
+
+    suspend fun resetAllData() = withContext(Dispatchers.IO) {
+        novelDao.deleteAllNovels()
+    }
+
+    // Stats
+    val totalNovelsCount: Flow<Int> = novelDao.getNovelCount()
+    val totalChaptersCount: Flow<Int> = chapterDao.getTotalChapterCount()
+    val totalReadChaptersCount: Flow<Int> = chapterDao.getTotalReadChapterCount()
+    val totalWordCount: Flow<Long> = chapterDao.getTotalWordCount()
+}

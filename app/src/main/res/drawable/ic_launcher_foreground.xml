@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:translateX="0"
+        android:translateY="0">
+        <!-- Open Book Base Shadow -->
+        <path
+            android:fillColor="#33000000"
+            android:pathData="M31,73 C39,70 47,70 54,74 C61,70 69,70 77,73 L77,75 C69,72 61,72 54,76 C47,72 39,72 31,75 Z" />
+
+        <!-- Open Book Main Pages (Left & Right) -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M52,43 C45,39 37,39 30,41 C28.9,41.3 28,42.3 28,43.5 L28,68 C28,69.5 29.3,70.5 30.7,70.2 C37.5,68.7 45,69 52,72.5 Z" />
+        
+        <path
+            android:fillColor="#F6F4EF"
+            android:pathData="M56,43 C63,39 71,39 78,41 C79.1,41.3 80,42.3 80,43.5 L80,68 C80,69.5 78.7,70.5 77.3,70.2 C70.5,68.7 63,69 56,72.5 Z" />
+
+        <!-- Book Spine Center & Bookmark Ribbon -->
+        <path
+            android:fillColor="#E5DFD0"
+            android:pathData="M53,42 L55,42 L55,73 L53,73 Z" />
+
+        <path
+            android:fillColor="#F6C445"
+            android:pathData="M52,38 L56,38 L56,52 L54,50 L52,52 Z" />
+
+        <!-- Decorative Text Lines on Left Page -->
+        <path
+            android:fillColor="#2F6F4E"
+            android:pathData="M33,48 h14 v2 h-14 z M33,53 h14 v2 h-14 z M33,58 h10 v2 h-10 z" />
+
+        <!-- Sound / Listen Wave on Right Page -->
+        <path
+            android:fillColor="#2F6F4E"
+            android:pathData="M61,48 h14 v2 h-14 z M61,53 h14 v2 h-14 z M61,58 h11 v2 h-11 z" />
+    </group>
+</vector>
