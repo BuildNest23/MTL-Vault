@@ -133,7 +133,24 @@ class ReaderViewModel(
         ttsManager.stop()
     }
 
-    private fun playCurrentChapterTts() {
+    fun playFromParagraph(paragraphIndex: Int) {
+        val chapter = _currentChapter.value ?: return
+        if (ttsManager.isPlayingChapter(novelId, chapter.id)) {
+            ttsManager.seekToChunk(paragraphIndex)
+        } else {
+            playCurrentChapterTts(startFromChunkIndex = paragraphIndex)
+        }
+    }
+
+    fun prevParagraph() {
+        ttsManager.previousChunk()
+    }
+
+    fun nextParagraph() {
+        ttsManager.nextChunk()
+    }
+
+    private fun playCurrentChapterTts(startFromChunkIndex: Int = 0) {
         val chapter = _currentChapter.value ?: return
         val content = _renderedContent.value
 
@@ -142,6 +159,7 @@ class ReaderViewModel(
             chapterId = chapter.id,
             chapterTitle = chapter.title,
             content = content,
+            startFromChunkIndex = startFromChunkIndex,
             onChapterComplete = {
                 viewModelScope.launch {
                     val currentSettings = settingsDataStore.settingsFlow.first()

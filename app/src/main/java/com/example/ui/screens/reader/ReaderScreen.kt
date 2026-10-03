@@ -6,7 +6,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -179,18 +182,74 @@ fun ReaderScreen(
 
                 Spacer(modifier = Modifier.height(28.dp))
 
-                Text(
-                    text = renderedContent,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontFamily = readerFontFamily,
-                        fontSize = settings.fontSize.sp,
-                        lineHeight = (settings.fontSize * settings.lineHeight).sp,
-                        color = textColor
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                val paragraphs = remember(renderedContent) {
+                    renderedContent.split(Regex("(\r?\n){2,}")).map { it.trim() }.filter { it.isNotBlank() }
+                }
 
-                Spacer(modifier = Modifier.height(60.dp))
+                paragraphs.forEachIndexed { paraIndex, paragraph ->
+                    val isReadingThis = (ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED) &&
+                            ttsInfo.currentChunkIndex == paraIndex &&
+                            ttsInfo.chapterId == chapter?.id
+
+                    val highlightBg = when (settings.theme) {
+                        "sepia" -> Color(0xFFECD7B2)
+                        "dark" -> Color(0xFF3B352A)
+                        "night" -> Color(0xFF282828)
+                        else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                    }
+
+                    val paraModifier = if (isReadingThis) {
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(highlightBg)
+                            .border(
+                                width = 2.dp,
+                                color = MaterialTheme.colorScheme.primary,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .clickable { viewModel.playFromParagraph(paraIndex) }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    } else {
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { viewModel.playFromParagraph(paraIndex) }
+                            .padding(horizontal = 4.dp, vertical = 4.dp)
+                    }
+
+                    Box(modifier = paraModifier) {
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (isReadingThis) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                    contentDescription = "Currently Reading",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .padding(top = 2.dp, end = 6.dp)
+                                )
+                            }
+                            Text(
+                                text = paragraph,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontFamily = readerFontFamily,
+                                    fontSize = settings.fontSize.sp,
+                                    lineHeight = (settings.fontSize * settings.lineHeight).sp,
+                                    color = textColor
+                                ),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                Spacer(modifier = Modifier.height(40.dp))
 
                 // End of chapter navigation buttons
                 Row(

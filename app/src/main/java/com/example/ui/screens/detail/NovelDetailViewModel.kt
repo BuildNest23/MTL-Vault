@@ -18,7 +18,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -203,76 +205,33 @@ class NovelDetailViewModel(
         _pendingImportText.value = null
     }
 
-    fun shareNovel(context: Context) {
+    fun exportToEpubUri(context: Context, destinationUri: Uri, selectedOnly: Boolean = false) {
         viewModelScope.launch {
-            val text = repository.exportNovelAsText(novelId)
-            val n = novel.value ?: return@launch
-            shareTextOrFile(context, n.title, text)
-        }
-    }
+            try {
+                val n = novel.value ?: return@launch
+                val ids = if (selectedOnly) _selectedChapterIds.value.toList() else null
+                val chaptersList = withContext(Dispatchers.IO) {
+                    repository.getRenderedChapters(novelId, ids)
+                }
+                if (chaptersList.isEmpty()) {
+                    _events.emit(DetailEvent.ShowToast("No chapters to export."))
+                    return@launch
+                }
+                context.contentResolver.openOutputStream(destinationUri)?.use { outputStream ->
+                    withContext(Dispatchers.IO) {
+                        com.example.importexport.EpubExporter.exportToEpub(n, chaptersList, outputStream)
+                    }
+                } ?: throw java.lang.IllegalStateException("Could not open destination file for writing.")
 
-    fun shareSelected(context: Context) {
-        viewModelScope.launch {
-            val ids = _selectedChapterIds.value.toList()
-            if (ids.isEmpty()) return@launch
-            val text = repository.exportChaptersAsText(novelId, ids)
-            val n = novel.value ?: return@launch
-            shareTextOrFile(context, "${n.title} - Selected (${ids.size})", text)
+                val countMsg = if (selectedOnly) "${chaptersList.size} chapter(s)" else "${chaptersList.size} chapter(s) of \"${n.title}\""
+                _events.emit(DetailEvent.ShowToast("Exported $countMsg to EPUB!"))
+                if (selectedOnly) {
+                    toggleSelectionMode()
+                }
+            } catch (e: Exception) {
+                _events.emit(DetailEvent.ShowToast("Export failed: ${e.localizedMessage}"))
+            }
         }
-    }
-
-    fun exportNovelToFile(context: Context) {
-        viewModelScope.launch {
-            val text = repository.exportNovelAsText(novelId)
-            val n = novel.value ?: return@launch
-            val file = saveToCacheFile(context, "${safeFileName(n.title)}.txt", text)
-            shareFileIntent(context, file, "text/plain", "Export Novel")
-        }
-    }
-
-    fun exportSelectedToFile(context: Context) {
-        viewModelScope.launch {
-            val ids = _selectedChapterIds.value.toList()
-            if (ids.isEmpty()) return@launch
-            val text = repository.exportChaptersAsText(novelId, ids)
-            val n = novel.value ?: return@launch
-            val file = saveToCacheFile(context, "${safeFileName(n.title)}_selected_${ids.size}.txt", text)
-            shareFileIntent(context, file, "text/plain", "Export Selected Chapters")
-        }
-    }
-
-    private fun shareTextOrFile(context: Context, title: String, text: String) {
-        val sendIntent = Intent().apply {
-            action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_TITLE, title)
-            putExtra(Intent.EXTRA_SUBJECT, title)
-            putExtra(Intent.EXTRA_TEXT, text)
-            type = "text/plain"
-        }
-        val chooser = Intent.createChooser(sendIntent, title)
-        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(chooser)
-    }
-
-    private fun saveToCacheFile(context: Context, filename: String, content: String): File {
-        val dir = File(context.cacheDir, "exports")
-        if (!dir.exists()) dir.mkdirs()
-        val file = File(dir, filename)
-        file.writeText(content, Charsets.UTF_8)
-        return file
-    }
-
-    private fun shareFileIntent(context: Context, file: File, mimeType: String, title: String) {
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = mimeType
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        val chooser = Intent.createChooser(intent, title)
-        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(chooser)
     }
 
     private fun safeFileName(name: String): String {

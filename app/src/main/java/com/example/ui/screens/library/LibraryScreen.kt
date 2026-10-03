@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -175,40 +176,44 @@ fun LibraryScreen(
                                 onClick = { showCreateNovelDialog = true },
                                 modifier = Modifier
                                     .weight(1f)
+                                    .height(42.dp)
                                     .testTag("library_new_novel_button"),
                                 shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                             ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("+ Novel", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text("+ Novel", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                             }
 
                             OutlinedButton(
                                 onClick = { filePickerLauncher.launch("*/*") },
                                 modifier = Modifier
                                     .weight(1f)
+                                    .height(42.dp)
                                     .testTag("library_import_file_button"),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
                             ) {
-                                Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("TXT/EPUB", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Select file", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             }
 
                             Button(
                                 onClick = { showPasteImportDialog = true },
                                 modifier = Modifier
                                     .weight(1f)
+                                    .height(42.dp)
                                     .testTag("library_paste_import_button"),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
                             ) {
-                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Paste", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Paste", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             }
                         }
                     }

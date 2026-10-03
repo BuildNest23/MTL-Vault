@@ -10,6 +10,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -101,6 +102,16 @@ fun NovelDetailScreen(
     ) { uri ->
         if (uri != null) {
             viewModel.startFileImport(context, uri)
+        }
+    }
+
+    var pendingExportSelectedOnly by remember { mutableStateOf(false) }
+
+    val createEpubLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/epub+zip")
+    ) { uri ->
+        if (uri != null) {
+            viewModel.exportToEpubUri(context, uri, selectedOnly = pendingExportSelectedOnly)
         }
     }
 
@@ -292,40 +303,44 @@ fun NovelDetailScreen(
                                 onClick = { onOpenEditor(null) },
                                 modifier = Modifier
                                     .weight(1f)
+                                    .height(42.dp)
                                     .testTag("detail_add_chapter_button"),
                                 shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                             ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("+ Chapter", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("+ Chapter", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                             }
 
                             OutlinedButton(
                                 onClick = { filePickerLauncher.launch("*/*") },
                                 modifier = Modifier
                                     .weight(1f)
+                                    .height(42.dp)
                                     .testTag("detail_import_file_button"),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
                             ) {
-                                Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("TXT/EPUB", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Select file", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             }
 
                             Button(
                                 onClick = { showPasteImportDialog = true },
                                 modifier = Modifier
                                     .weight(1f)
+                                    .height(42.dp)
                                     .testTag("detail_paste_import_button"),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
                             ) {
-                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Paste", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Paste", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             }
                         }
 
@@ -339,36 +354,32 @@ fun NovelDetailScreen(
                                 onClick = onOpenReplacements,
                                 modifier = Modifier
                                     .weight(1f)
+                                    .height(42.dp)
                                     .testTag("detail_open_replacements_button"),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                             ) {
                                 Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Rules ($rulesCount)", fontSize = 12.sp)
+                                Text("Rules ($rulesCount)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             }
 
                             OutlinedButton(
-                                onClick = { viewModel.exportNovelToFile(context) },
+                                onClick = {
+                                    val safeName = currentNovel.title.replace(Regex("[^a-zA-Z0-9.-]"), "_").trim('_')
+                                    pendingExportSelectedOnly = false
+                                    createEpubLauncher.launch("$safeName.epub")
+                                },
                                 modifier = Modifier
                                     .weight(1f)
+                                    .height(42.dp)
                                     .testTag("detail_export_novel_button"),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                             ) {
                                 Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Export", fontSize = 12.sp)
-                            }
-
-                            OutlinedButton(
-                                onClick = { viewModel.shareNovel(context) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("detail_share_novel_button"),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Share", fontSize = 12.sp)
+                                Text("Export EPUB", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             }
                         }
                     }
@@ -429,35 +440,43 @@ fun NovelDetailScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Button(
-                                    onClick = { viewModel.shareSelected(context) },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(8.dp),
-                                    enabled = selectedChapterIds.isNotEmpty()
-                                ) {
-                                    Text("Share", fontSize = 12.sp)
-                                }
                                 OutlinedButton(
-                                    onClick = { viewModel.exportSelectedToFile(context) },
-                                    modifier = Modifier.weight(1f),
+                                    onClick = {
+                                        val safeName = currentNovel.title.replace(Regex("[^a-zA-Z0-9.-]"), "_").trim('_')
+                                        pendingExportSelectedOnly = true
+                                        createEpubLauncher.launch("${safeName}_selected_${selectedChapterIds.size}.epub")
+                                    },
+                                    modifier = Modifier
+                                        .weight(1.3f)
+                                        .height(38.dp),
                                     shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
                                     enabled = selectedChapterIds.isNotEmpty()
                                 ) {
-                                    Text("Export", fontSize = 12.sp)
+                                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text("Export EPUB", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                                 }
                                 OutlinedButton(
                                     onClick = { viewModel.selectAllChapters() },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(8.dp)
+                                    modifier = Modifier
+                                        .weight(0.85f)
+                                        .height(38.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
                                 ) {
-                                    Text("All", fontSize = 12.sp)
+                                    Text("All", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                                 }
                                 OutlinedButton(
                                     onClick = { viewModel.clearChapterSelection() },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(8.dp)
+                                    modifier = Modifier
+                                        .weight(0.85f)
+                                        .height(38.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                                    enabled = selectedChapterIds.isNotEmpty()
                                 ) {
-                                    Text("Clear", fontSize = 12.sp)
+                                    Text("Clear", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                                 }
                             }
                         }

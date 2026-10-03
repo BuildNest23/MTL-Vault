@@ -215,6 +215,28 @@ class NovelRepository(
         sb.toString()
     }
 
+    suspend fun getRenderedChapters(novelId: String, chapterIds: List<String>? = null): List<ChapterEntity> = withContext(Dispatchers.Default) {
+        val novel = novelDao.getNovelByIdSync(novelId) ?: return@withContext emptyList()
+        val rawChapters = if (chapterIds == null) {
+            chapterDao.getChaptersForNovelSync(novelId)
+        } else {
+            chapterDao.getChaptersByIdsSync(chapterIds)
+        }
+        val settings = settingsDataStore.settingsFlow.first()
+        val rules = if (novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()) {
+            ReplacementEngine.parseRules(novel.replacements)
+        } else {
+            emptyList()
+        }
+        if (rules.isEmpty()) {
+            rawChapters
+        } else {
+            rawChapters.map { ch ->
+                ch.copy(content = ReplacementEngine.applyRules(ch.content, rules))
+            }
+        }
+    }
+
     suspend fun exportChaptersAsText(novelId: String, chapterIds: List<String>): String = withContext(Dispatchers.Default) {
         val novel = novelDao.getNovelByIdSync(novelId) ?: return@withContext ""
         val chapters = chapterDao.getChaptersByIdsSync(chapterIds)

@@ -44,15 +44,11 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             AudioManager.AUDIOFOCUS_LOSS -> {
                 stop()
             }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                pause()
-            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                // Duck or pause
                 pause()
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
-                // Resume if previously paused by transient focus loss
                 if (_playbackInfo.value.state == TtsState.PAUSED) {
                     resume()
                 }
@@ -92,13 +88,13 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 override fun onDone(utteranceId: String?) {
                     val index = utteranceId?.substringAfter("chunk_")?.toIntOrNull() ?: 0
                     if (index >= chunks.size - 1) {
-                        // Finished last chunk of current chapter
                         mainScope.launch {
                             _playbackInfo.value = _playbackInfo.value.copy(
                                 state = TtsState.IDLE,
                                 currentChunkIndex = chunks.size
                             )
                             abandonAudioFocus()
+                            TtsPlaybackService.stop(context)
                             onChapterCompleteCallback?.invoke()
                         }
                     } else {
@@ -152,6 +148,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         chapterId: String,
         chapterTitle: String,
         content: String,
+        startFromChunkIndex: Int = 0,
         onChapterComplete: (() -> Unit)? = null
     ) {
         if (!isInitialized || tts == null) {
@@ -162,16 +159,15 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             return
         }
 
-        stop()
+        stop(triggerServiceStop = false)
 
         currentNovelId = novelId
         currentChapterId = chapterId
         currentChapterTitle = chapterTitle
         onChapterCompleteCallback = onChapterComplete
 
-        // Intelligent text chunking
         chunks = chunkText(content)
-        currentChunkIndex = 0
+        currentChunkIndex = startFromChunkIndex.coerceIn(0, (chunks.size - 1).coerceAtLeast(0))
 
         if (chunks.isEmpty()) {
             _playbackInfo.value = TtsPlaybackInfo(
@@ -198,10 +194,36 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             chapterId = chapterId,
             chapterTitle = chapterTitle,
             totalChunks = chunks.size,
-            currentChunkIndex = 0
+            currentChunkIndex = currentChunkIndex
         )
 
+        TtsPlaybackService.start(context)
         speakFromCurrentChunk()
+    }
+
+    fun seekToChunk(index: Int) {
+        if (chunks.isEmpty()) return
+        val target = index.coerceIn(0, chunks.size - 1)
+        currentChunkIndex = target
+        _playbackInfo.value = _playbackInfo.value.copy(
+            state = TtsState.PLAYING,
+            currentChunkIndex = target
+        )
+        if (requestAudioFocus()) {
+            speakFromCurrentChunk()
+        }
+    }
+
+    fun previousChunk() {
+        if (currentChunkIndex > 0) {
+            seekToChunk(currentChunkIndex - 1)
+        }
+    }
+
+    fun nextChunk() {
+        if (currentChunkIndex < chunks.size - 1) {
+            seekToChunk(currentChunkIndex + 1)
+        }
     }
 
     private fun speakFromCurrentChunk() {
@@ -234,13 +256,16 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
-    fun stop() {
+    fun stop(triggerServiceStop: Boolean = true) {
         tts?.stop()
         abandonAudioFocus()
         _playbackInfo.value = _playbackInfo.value.copy(
             state = TtsState.IDLE,
             currentChunkIndex = 0
         )
+        if (triggerServiceStop) {
+            TtsPlaybackService.stop(context)
+        }
     }
 
     fun setSpeechRate(rate: Float) {
@@ -267,60 +292,15 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     }
 
     fun isPlayingChapter(novelId: String, chapterId: String): Boolean {
-        return _playbackInfo.value.state == TtsState.PLAYING &&
+        return (_playbackInfo.value.state == TtsState.PLAYING || _playbackInfo.value.state == TtsState.PAUSED) &&
                 currentNovelId == novelId &&
                 currentChapterId == chapterId
     }
 
-    private fun chunkText(text: String, maxChunkSize: Int = 1500): List<String> {
-        val result = mutableListOf<String>()
-        val paragraphs = text.split(Regex("(\r?\n){2,}")).map { it.trim() }.filter { it.isNotBlank() }
-
-        for (para in paragraphs) {
-            if (para.length <= maxChunkSize) {
-                result.add(para)
-            } else {
-                // Split paragraph into sentences
-                val sentences = para.split(Regex("(?<=[.!?。！？\n])\\s+")).map { it.trim() }.filter { it.isNotBlank() }
-                var buffer = StringBuilder()
-
-                for (sentence in sentences) {
-                    if (sentence.length > maxChunkSize) {
-                        // Flush buffer first
-                        if (buffer.isNotEmpty()) {
-                            result.add(buffer.toString())
-                            buffer = StringBuilder()
-                        }
-                        // Fallback: split huge sentence into word groups
-                        val words = sentence.split(Regex("\\s+"))
-                        var wordBuf = StringBuilder()
-                        for (w in words) {
-                            if (wordBuf.length + w.length + 1 > maxChunkSize) {
-                                if (wordBuf.isNotEmpty()) {
-                                    result.add(wordBuf.toString())
-                                    wordBuf = StringBuilder()
-                                }
-                            }
-                            if (wordBuf.isNotEmpty()) wordBuf.append(" ")
-                            wordBuf.append(w)
-                        }
-                        if (wordBuf.isNotEmpty()) {
-                            result.add(wordBuf.toString())
-                        }
-                    } else if (buffer.length + sentence.length + 1 <= maxChunkSize) {
-                        if (buffer.isNotEmpty()) buffer.append(" ")
-                        buffer.append(sentence)
-                    } else {
-                        result.add(buffer.toString())
-                        buffer = StringBuilder(sentence)
-                    }
-                }
-                if (buffer.isNotEmpty()) {
-                    result.add(buffer.toString())
-                }
-            }
-        }
-        return result
+    private fun chunkText(text: String): List<String> {
+        return text.split(Regex("(\r?\n){2,}"))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
     }
 
     private fun requestAudioFocus(): Boolean {

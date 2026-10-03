@@ -241,4 +241,51 @@ class MtlVaultUnitTest {
             tempZip.delete()
         }
     }
+
+    @Test
+    fun testEpubExporterRoundTrip() {
+        val novel = NovelEntity(
+            id = "n_export",
+            title = "Martial World",
+            author = "Cocooned Cow",
+            description = "A young boy's path into the divine realm."
+        )
+        val ch1 = ChapterEntity(
+            id = "c_1",
+            novelId = "n_export",
+            orderIndex = 0,
+            title = "Chapter 1: The Magic Cube",
+            content = "Lin Ming stood before the seven mysterious pillars.\n\nA strange pulse resonated from within.",
+            wordCount = 14
+        )
+        val ch2 = ChapterEntity(
+            id = "c_2",
+            novelId = "n_export",
+            orderIndex = 1,
+            title = "Chapter 2: Heretical God",
+            content = "The flames of thunder ignited his true essence.",
+            wordCount = 8
+        )
+
+        val tempFile = java.io.File.createTempFile("export_test", ".epub")
+        try {
+            tempFile.outputStream().use { out ->
+                com.example.importexport.EpubExporter.exportToEpub(novel, listOf(ch1, ch2), out)
+            }
+            assertTrue(tempFile.length() > 0)
+
+            // Verify with parser
+            val parsed = com.example.importexport.EpubParser.parseEpubFile(tempFile)
+            assertEquals("Martial World", parsed.title)
+            assertEquals("Cocooned Cow", parsed.author)
+            assertEquals("A young boy's path into the divine realm.", parsed.description)
+            assertEquals(2, parsed.chapters.size)
+            assertEquals("Chapter 1: The Magic Cube", parsed.chapters[0].title)
+            assertTrue(parsed.chapters[0].content.contains("seven mysterious pillars"))
+            assertEquals("Chapter 2: Heretical God", parsed.chapters[1].title)
+            assertTrue(parsed.chapters[1].content.contains("true essence"))
+        } finally {
+            tempFile.delete()
+        }
+    }
 }
