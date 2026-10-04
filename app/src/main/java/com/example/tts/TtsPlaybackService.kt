@@ -12,6 +12,7 @@ import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.Bundle
 import android.os.IBinder
 import android.widget.RemoteViews
 import com.example.MainActivity
@@ -103,6 +104,14 @@ class TtsPlaybackService : Service() {
                     val targetIndex = ((pos.toDouble() / durationMs.toDouble()) * totalChunks).toInt().coerceIn(0, totalChunks - 1)
                     ttsManager.seekToChunk(targetIndex)
                 }
+
+                override fun onCustomAction(action: String, extras: Bundle?) {
+                    if (action == ACTION_STOP) {
+                        ttsManager?.stop()
+                        stopForegroundNotification()
+                        stopSelf()
+                    }
+                }
             })
             isActive = true
         }
@@ -169,7 +178,16 @@ class TtsPlaybackService : Service() {
         observerJob = serviceScope.launch {
             ttsManager.playbackInfo.collectLatest { info ->
                 updateMediaSessionState(info)
-                if (info.state == TtsState.PLAYING || info.state == TtsState.PAUSED) {
+                if (info.state == TtsState.PLAYING) {
+                    val notif = buildNotification(info)
+                    startForegroundCompat(notif)
+                } else if (info.state == TtsState.PAUSED) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        stopForeground(STOP_FOREGROUND_DETACH)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        stopForeground(false)
+                    }
                     updateNotification(info)
                 } else if (info.state == TtsState.IDLE || info.state == TtsState.ERROR) {
                     stopForegroundNotification()
@@ -196,6 +214,12 @@ class TtsPlaybackService : Service() {
                 PlaybackState.ACTION_STOP or
                 PlaybackState.ACTION_SEEK_TO
 
+        val customCloseAction = PlaybackState.CustomAction.Builder(
+            ACTION_STOP,
+            "✕",
+            R.drawable.ic_tts_close
+        ).build()
+
         val totalChunks = info.totalChunks.coerceAtLeast(1)
         val durationMs = totalChunks * CHUNK_UNIT_MS
         val positionMs = (info.currentChunkIndex.coerceIn(0, totalChunks - 1)) * CHUNK_UNIT_MS
@@ -203,6 +227,7 @@ class TtsPlaybackService : Service() {
         // Fixed 0.0f speed stops phantom auto-advance past chapter start
         val playbackState = PlaybackState.Builder()
             .setActions(actions)
+            .addCustomAction(customCloseAction)
             .setState(state, positionMs, 0.0f)
             .build()
 
@@ -340,6 +365,7 @@ class TtsPlaybackService : Service() {
             .setContentTitle(title)
             .setContentText(subtitle)
             .setContentIntent(openAppPendingIntent)
+            .setDeleteIntent(stopPendingIntent)
             .setOngoing(isPlaying)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setCustomContentView(customView)
