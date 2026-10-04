@@ -336,7 +336,7 @@ class TtsPlaybackService : Service() {
         }
 
         builder
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setSmallIcon(R.drawable.ic_notification_book)
             .setContentTitle(title)
             .setContentText(subtitle)
             .setContentIntent(openAppPendingIntent)
@@ -354,20 +354,12 @@ class TtsPlaybackService : Service() {
             builder.style = mediaStyle
         }
 
-        // Actions: 0 = Prev (<<), 1 = Stop (■), 2 = Next (>>)
+        // Actions: 0 = Prev (⏮), 1 = Next (⏭), 2 = Close (✕)
         builder.addAction(
             Notification.Action.Builder(
                 R.drawable.ic_tts_prev,
                 "Previous",
                 prevPendingIntent
-            ).build()
-        )
-
-        builder.addAction(
-            Notification.Action.Builder(
-                R.drawable.ic_tts_stop,
-                "Stop",
-                stopPendingIntent
             ).build()
         )
 
@@ -379,16 +371,27 @@ class TtsPlaybackService : Service() {
             ).build()
         )
 
+        builder.addAction(
+            Notification.Action.Builder(
+                R.drawable.ic_tts_close,
+                "✕",
+                stopPendingIntent
+            ).build()
+        )
+
         return builder.build()
     }
 
     private fun stopForegroundNotification() {
+        mediaSession?.isActive = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
             @Suppress("DEPRECATION")
             stopForeground(true)
         }
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        manager?.cancel(NOTIFICATION_ID)
     }
 
     override fun onDestroy() {

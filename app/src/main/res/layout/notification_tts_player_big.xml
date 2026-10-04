@@ -77,15 +77,15 @@
             android:layout_width="24dp"
             android:layout_height="1dp" />
 
-        <!-- Stop Button ■ -->
+        <!-- Close Button X -->
         <ImageButton
             android:id="@+id/tts_btn_stop"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Stop"
+            android:contentDescription="X"
             android:scaleType="centerInside"
-            android:src="@drawable/ic_tts_stop"
+            android:src="@drawable/ic_tts_close"
             android:tint="#EDEDED" />
 
         <Space
