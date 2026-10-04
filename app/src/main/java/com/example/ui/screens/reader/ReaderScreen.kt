@@ -5,9 +5,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.foundation.layout.Arrangement
@@ -186,11 +188,10 @@ fun ReaderScreen(
                     renderedContent.split(Regex("(\r?\n){2,}")).map { it.trim() }.filter { it.isNotBlank() }
                 }
 
-                val isTtsActive = (ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED) &&
-                        ttsInfo.chapterId == chapter?.id
-
                 paragraphs.forEachIndexed { paraIndex, paragraph ->
-                    val isReadingThis = isTtsActive && ttsInfo.currentChunkIndex == paraIndex
+                    val isReadingThis = (ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED) &&
+                            ttsInfo.currentChunkIndex == paraIndex &&
+                            ttsInfo.chapterId == chapter?.id
 
                     val highlightBg = when (settings.theme) {
                         "sepia" -> Color(0xFFECD7B2)
@@ -199,6 +200,7 @@ fun ReaderScreen(
                         else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
                     }
 
+                    @OptIn(ExperimentalFoundationApi::class)
                     val paraModifier = if (isReadingThis) {
                         Modifier
                             .fillMaxWidth()
@@ -209,20 +211,19 @@ fun ReaderScreen(
                                 color = MaterialTheme.colorScheme.primary,
                                 shape = RoundedCornerShape(8.dp)
                             )
-                            .clickable { viewModel.playFromParagraph(paraIndex) }
+                            .combinedClickable(
+                                onClick = { controlsVisible = !controlsVisible },
+                                onDoubleClick = { viewModel.playFromParagraph(paraIndex) }
+                            )
                             .padding(horizontal = 12.dp, vertical = 8.dp)
-                    } else if (isTtsActive) {
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { viewModel.playFromParagraph(paraIndex) }
-                            .padding(horizontal = 4.dp, vertical = 4.dp)
                     } else {
-                        // In pure reading mode: tapping toggles reading controls, doesn't start TTS until Play button is pressed!
                         Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable { controlsVisible = !controlsVisible }
+                            .combinedClickable(
+                                onClick = { controlsVisible = !controlsVisible },
+                                onDoubleClick = { viewModel.playFromParagraph(paraIndex) }
+                            )
                             .padding(horizontal = 4.dp, vertical = 4.dp)
                     }
 
