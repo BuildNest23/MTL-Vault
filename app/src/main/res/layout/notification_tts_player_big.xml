@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tts_notif_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="@drawable/bg_tts_pill">
+
+    <TextView
+        android:id="@+id/tts_notif_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Chapter Title"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/tts_notif_subtitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:text="MTL Vault • Paragraph 1 of 30"
+        android:textColor="#B0B0B0"
+        android:textSize="13sp"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- Progress Bar matching paragraph completion -->
+    <ProgressBar
+        android:id="@+id/tts_notif_progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:layout_marginTop="10dp"
+        android:progress="0"
+        android:max="100"
+        android:progressTint="#77D6A3" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="12dp"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <!-- Previous Button << -->
+        <ImageButton
+            android:id="@+id/tts_btn_prev"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Previous Paragraph"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_tts_prev"
+            android:tint="#EDEDED" />
+
+        <Space
+            android:layout_width="24dp"
+            android:layout_height="1dp" />
+
+        <!-- Circular Accent Play / Pause Button -->
+        <ImageButton
+            android:id="@+id/tts_btn_play_pause"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:background="@drawable/bg_tts_play_circle"
+            android:contentDescription="Play / Pause"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_tts_pause"
+            android:tint="#102B1E" />
+
+        <Space
+            android:layout_width="24dp"
+            android:layout_height="1dp" />
+
+        <!-- Stop Button ■ -->
+        <ImageButton
+            android:id="@+id/tts_btn_stop"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Stop"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_tts_stop"
+            android:tint="#EDEDED" />
+
+        <Space
+            android:layout_width="24dp"
+            android:layout_height="1dp" />
+
+        <!-- Next Button >> -->
+        <ImageButton
+            android:id="@+id/tts_btn_next"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Next Paragraph"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_tts_next"
+            android:tint="#EDEDED" />
+    </LinearLayout>
+
+</LinearLayout>

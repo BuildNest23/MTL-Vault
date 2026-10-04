@@ -13,8 +13,10 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
 import android.os.IBinder
+import android.widget.RemoteViews
 import com.example.MainActivity
 import com.example.MtlVaultApplication
+import com.example.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,6 +32,8 @@ class TtsPlaybackService : Service() {
     companion object {
         const val CHANNEL_ID = "tts_media_channel"
         const val NOTIFICATION_ID = 1001
+
+        const val CHUNK_UNIT_MS = 10_000L
 
         const val ACTION_START = "com.example.tts.ACTION_START"
         const val ACTION_PLAY = "com.example.tts.ACTION_PLAY"
@@ -93,7 +97,11 @@ class TtsPlaybackService : Service() {
                 }
 
                 override fun onSeekTo(pos: Long) {
-                    ttsManager?.seekToChunk(pos.toInt())
+                    val info = ttsManager?.playbackInfo?.value ?: return
+                    val totalChunks = info.totalChunks.coerceAtLeast(1)
+                    val durationMs = totalChunks * CHUNK_UNIT_MS
+                    val targetIndex = ((pos.toDouble() / durationMs.toDouble()) * totalChunks).toInt().coerceIn(0, totalChunks - 1)
+                    ttsManager.seekToChunk(targetIndex)
                 }
             })
             isActive = true
@@ -186,11 +194,14 @@ class TtsPlaybackService : Service() {
                 PlaybackState.ACTION_STOP or
                 PlaybackState.ACTION_SEEK_TO
 
-        val playbackSpeed = if (info.state == TtsState.PLAYING) 1.0f else 0.0f
+        val totalChunks = info.totalChunks.coerceAtLeast(1)
+        val durationMs = totalChunks * CHUNK_UNIT_MS
+        val positionMs = (info.currentChunkIndex.coerceIn(0, totalChunks - 1)) * CHUNK_UNIT_MS
 
+        // Fixed 0.0f speed stops phantom auto-advance past chapter start
         val playbackState = PlaybackState.Builder()
             .setActions(actions)
-            .setState(state, info.currentChunkIndex.toLong(), playbackSpeed)
+            .setState(state, positionMs, 0.0f)
             .build()
 
         session.setPlaybackState(playbackState)
@@ -205,10 +216,10 @@ class TtsPlaybackService : Service() {
         val metadata = MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, title)
             .putString(MediaMetadata.METADATA_KEY_ARTIST, "MTL Vault")
-            .putString(MediaMetadata.METADATA_KEY_ALBUM, "Novel Speech")
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, "Novel Audio")
             .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, title)
             .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, subtitle)
-            .putLong(MediaMetadata.METADATA_KEY_DURATION, info.totalChunks.coerceAtLeast(1).toLong())
+            .putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs)
             .build()
 
         session.setMetadata(metadata)
@@ -261,17 +272,17 @@ class TtsPlaybackService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val nextPendingIntent = PendingIntent.getService(
+        val stopPendingIntent = PendingIntent.getService(
             this,
             3,
-            Intent(this, TtsPlaybackService::class.java).apply { action = ACTION_NEXT },
+            Intent(this, TtsPlaybackService::class.java).apply { action = ACTION_STOP },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val stopPendingIntent = PendingIntent.getService(
+        val nextPendingIntent = PendingIntent.getService(
             this,
             4,
-            Intent(this, TtsPlaybackService::class.java).apply { action = ACTION_STOP },
+            Intent(this, TtsPlaybackService::class.java).apply { action = ACTION_NEXT },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -281,6 +292,38 @@ class TtsPlaybackService : Service() {
             "Paragraph ${info.currentChunkIndex + 1} of ${info.totalChunks}"
         } else {
             "Audiobook & Novel Reader"
+        }
+
+        // Custom RemoteViews matching in-app dark pill design in Image 2
+        val customView = RemoteViews(packageName, R.layout.notification_tts_player).apply {
+            setTextViewText(R.id.tts_notif_title, title)
+            setTextViewText(R.id.tts_notif_subtitle, subtitle)
+            setImageViewResource(
+                R.id.tts_btn_play_pause,
+                if (isPlaying) R.drawable.ic_tts_pause else R.drawable.ic_tts_play
+            )
+            setOnClickPendingIntent(R.id.tts_btn_prev, prevPendingIntent)
+            setOnClickPendingIntent(R.id.tts_btn_play_pause, togglePendingIntent)
+            setOnClickPendingIntent(R.id.tts_btn_stop, stopPendingIntent)
+            setOnClickPendingIntent(R.id.tts_btn_next, nextPendingIntent)
+            setOnClickPendingIntent(R.id.tts_notif_root, openAppPendingIntent)
+        }
+
+        val totalChunks = info.totalChunks.coerceAtLeast(1)
+        val customBigView = RemoteViews(packageName, R.layout.notification_tts_player_big).apply {
+            setTextViewText(R.id.tts_notif_title, title)
+            setTextViewText(R.id.tts_notif_subtitle, subtitle)
+            val progressPercent = ((info.currentChunkIndex.toFloat() / totalChunks) * 100).toInt()
+            setProgressBar(R.id.tts_notif_progress, 100, progressPercent, false)
+            setImageViewResource(
+                R.id.tts_btn_play_pause,
+                if (isPlaying) R.drawable.ic_tts_pause else R.drawable.ic_tts_play
+            )
+            setOnClickPendingIntent(R.id.tts_btn_prev, prevPendingIntent)
+            setOnClickPendingIntent(R.id.tts_btn_play_pause, togglePendingIntent)
+            setOnClickPendingIntent(R.id.tts_btn_stop, stopPendingIntent)
+            setOnClickPendingIntent(R.id.tts_btn_next, nextPendingIntent)
+            setOnClickPendingIntent(R.id.tts_notif_root, openAppPendingIntent)
         }
 
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -297,6 +340,8 @@ class TtsPlaybackService : Service() {
             .setContentIntent(openAppPendingIntent)
             .setOngoing(isPlaying)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setCustomContentView(customView)
+            .setCustomBigContentView(customBigView)
 
         // Attach system MediaStyle with active MediaSession token
         val sessionToken = mediaSession?.sessionToken
@@ -307,10 +352,10 @@ class TtsPlaybackService : Service() {
             builder.style = mediaStyle
         }
 
-        // Actions: 0 = Prev, 1 = Play/Pause, 2 = Next, 3 = Stop
+        // Actions: 0 = Prev (<<), 1 = Stop (■), 2 = Next (>>)
         builder.addAction(
             Notification.Action.Builder(
-                android.R.drawable.ic_media_previous,
+                R.drawable.ic_tts_prev,
                 "Previous",
                 prevPendingIntent
             ).build()
@@ -318,25 +363,17 @@ class TtsPlaybackService : Service() {
 
         builder.addAction(
             Notification.Action.Builder(
-                if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
-                if (isPlaying) "Pause" else "Play",
-                togglePendingIntent
-            ).build()
-        )
-
-        builder.addAction(
-            Notification.Action.Builder(
-                android.R.drawable.ic_media_next,
-                "Next",
-                nextPendingIntent
-            ).build()
-        )
-
-        builder.addAction(
-            Notification.Action.Builder(
-                android.R.drawable.ic_menu_close_clear_cancel,
+                R.drawable.ic_tts_stop,
                 "Stop",
                 stopPendingIntent
+            ).build()
+        )
+
+        builder.addAction(
+            Notification.Action.Builder(
+                R.drawable.ic_tts_next,
+                "Next",
+                nextPendingIntent
             ).build()
         )
 
