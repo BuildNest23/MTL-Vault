@@ -29,6 +29,7 @@ data class ChapterEntity(
     val content: String,
     val wordCount: Int = 0,
     val scrollPosition: Int = 0,
+    val readingParagraphIndex: Int = 0,
     val read: Boolean = false,
     val readAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),

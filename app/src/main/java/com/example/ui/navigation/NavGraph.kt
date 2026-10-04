@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -31,13 +32,28 @@ import com.example.ui.screens.stats.StatsViewModel
 import com.example.ui.screens.settings.SettingsScreen
 import com.example.ui.screens.settings.SettingsViewModel
 
+import android.content.Intent
+
 @Composable
 fun MtlVaultNavGraph(
-    application: MtlVaultApplication
+    application: MtlVaultApplication,
+    intent: Intent? = null
 ) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+
+    LaunchedEffect(intent) {
+        if (intent?.getBooleanExtra("OPEN_READER", false) == true) {
+            val novelId = intent.getStringExtra("NOVEL_ID")
+            val chapterId = intent.getStringExtra("CHAPTER_ID")
+            if (!novelId.isNullOrBlank() && !chapterId.isNullOrBlank()) {
+                navController.navigate(Screen.Reader.createRoute(novelId, chapterId)) {
+                    popUpTo(Screen.Library.route)
+                }
+            }
+        }
+    }
 
     val showBottomBar = currentRoute in listOf(
         Screen.Library.route,
@@ -115,7 +131,10 @@ fun MtlVaultNavGraph(
                     viewModel = viewModel,
                     onBackClick = { navController.popBackStack() },
                     onOpenReader = { chapterId ->
-                        navController.navigate(Screen.Reader.createRoute(novelId, chapterId))
+                        navController.navigate(Screen.Reader.createRoute(novelId, chapterId, autoPlay = false))
+                    },
+                    onPlayNovel = { chapterId ->
+                        navController.navigate(Screen.Reader.createRoute(novelId, chapterId, autoPlay = true))
                     },
                     onOpenEditor = { chapterId ->
                         navController.navigate(Screen.ChapterEditor.createRoute(novelId, chapterId))
@@ -131,18 +150,24 @@ fun MtlVaultNavGraph(
                 route = Screen.Reader.route,
                 arguments = listOf(
                     navArgument("novelId") { type = NavType.StringType },
-                    navArgument("chapterId") { type = NavType.StringType }
+                    navArgument("chapterId") { type = NavType.StringType },
+                    navArgument("autoPlay") {
+                        type = NavType.BoolType
+                        defaultValue = false
+                    }
                 )
             ) { backStackEntry ->
                 val novelId = backStackEntry.arguments?.getString("novelId") ?: ""
                 val chapterId = backStackEntry.arguments?.getString("chapterId") ?: ""
-                val viewModel = remember(novelId, chapterId) {
+                val autoPlay = backStackEntry.arguments?.getBoolean("autoPlay") ?: false
+                val viewModel = remember(novelId, chapterId, autoPlay) {
                     ReaderViewModel(
                         novelId = novelId,
                         initialChapterId = chapterId,
                         repository = application.novelRepository,
                         settingsDataStore = application.settingsDataStore,
-                        ttsManager = application.ttsManager
+                        ttsManager = application.ttsManager,
+                        autoPlayTtsOnLoad = autoPlay
                     )
                 }
                 ReaderScreen(

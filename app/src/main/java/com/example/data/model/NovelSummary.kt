@@ -35,5 +35,6 @@ data class ChapterSummary(
     val scrollPosition: Int,
     val read: Boolean,
     val readAt: Long?,
-    val createdAt: Long
+    val createdAt: Long,
+    val readingParagraphIndex: Int = 0
 )

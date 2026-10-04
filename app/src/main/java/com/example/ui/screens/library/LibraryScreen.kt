@@ -35,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -164,6 +165,14 @@ fun LibraryScreen(
                                     fontSize = 18.sp
                                 )
                             )
+
+                            TextButton(
+                                onClick = { viewModel.loadSampleNovel() }
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Example Book", fontSize = 12.sp)
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -222,13 +231,27 @@ fun LibraryScreen(
 
             if (novels.isEmpty()) {
                 item {
-                    EmptyState(
-                        icon = Icons.Default.AutoStories,
-                        title = "No novels yet",
-                        message = "Tap '+ Novel' to create your first book, or import an existing .txt file to begin reading.",
-                        actionText = "+ New Novel",
-                        onActionClick = { showCreateNovelDialog = true }
-                    )
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        EmptyState(
+                            icon = Icons.Default.AutoStories,
+                            title = "No novels yet",
+                            message = "Tap '+ Novel' to create your first book, or load a sample novel to check out the reader.",
+                            actionText = "+ New Novel",
+                            onActionClick = { showCreateNovelDialog = true }
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = { viewModel.loadSampleNovel() },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.AutoStories, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Load Example Novel")
+                        }
+                    }
                 }
             } else {
                 items(

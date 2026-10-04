@@ -116,6 +116,14 @@ class NovelDetailViewModel(
         }
     }
 
+    fun addSampleChapters() {
+        viewModelScope.launch {
+            val chapters = com.example.data.sample.SampleDataGenerator.generateSampleChapters()
+            repository.importChapters(novelId, chapters)
+            _events.emit(DetailEvent.ShowToast("Added 2 sample chapters!"))
+        }
+    }
+
     fun deleteNovel() {
         viewModelScope.launch {
             repository.deleteNovel(novelId)

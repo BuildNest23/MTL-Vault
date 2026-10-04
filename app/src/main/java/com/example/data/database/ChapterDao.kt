@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.Flow
 interface ChapterDao {
 
     @Query("""
-        SELECT id, novelId, orderIndex, title, wordCount, scrollPosition, read, readAt, createdAt 
+        SELECT id, novelId, orderIndex, title, wordCount, scrollPosition, read, readAt, createdAt, readingParagraphIndex 
         FROM chapters 
         WHERE novelId = :novelId 
         ORDER BY orderIndex ASC
@@ -59,6 +59,9 @@ interface ChapterDao {
 
     @Query("UPDATE chapters SET scrollPosition = :position WHERE id = :chapterId")
     suspend fun updateScrollPosition(chapterId: String, position: Int)
+
+    @Query("UPDATE chapters SET readingParagraphIndex = :paragraphIndex, scrollPosition = :scrollY WHERE id = :chapterId")
+    suspend fun updateReadingPosition(chapterId: String, paragraphIndex: Int, scrollY: Int)
 
     @Query("DELETE FROM chapters WHERE id = :id")
     suspend fun deleteChapterById(id: String)

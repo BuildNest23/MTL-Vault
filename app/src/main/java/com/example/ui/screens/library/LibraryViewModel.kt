@@ -47,6 +47,20 @@ class LibraryViewModel(
 
     private val _targetNovelId = MutableStateFlow<String?>(null)
 
+    init {
+        viewModelScope.launch {
+            repository.ensureSampleDataIfEmpty()
+        }
+    }
+
+    fun loadSampleNovel() {
+        viewModelScope.launch {
+            val novelId = repository.createSampleNovel()
+            _events.emit(LibraryEvent.ShowToast("Sample novel added!"))
+            _events.emit(LibraryEvent.OpenNovel(novelId))
+        }
+    }
+
     fun createNovel(title: String) {
         if (title.isBlank()) return
         viewModelScope.launch {

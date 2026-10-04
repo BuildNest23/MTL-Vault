@@ -5,9 +5,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.media.AudioManager
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
@@ -29,6 +32,39 @@ class TtsPlaybackService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var observerJob: Job? = null
     private var mediaSession: MediaSession? = null
+
+    private var isBecomingNoisyRegistered = false
+    private val becomingNoisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                val ttsManager = (application as? MtlVaultApplication)?.ttsManager
+                ttsManager?.pause()
+            }
+        }
+    }
+
+    private fun registerBecomingNoisy() {
+        if (!isBecomingNoisyRegistered) {
+            val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(becomingNoisyReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(becomingNoisyReceiver, filter)
+            }
+            isBecomingNoisyRegistered = true
+        }
+    }
+
+    private fun unregisterBecomingNoisy() {
+        if (isBecomingNoisyRegistered) {
+            try {
+                unregisterReceiver(becomingNoisyReceiver)
+            } catch (e: Exception) {
+                // ignore
+            }
+            isBecomingNoisyRegistered = false
+        }
+    }
 
     companion object {
         const val CHANNEL_ID = "tts_media_channel"
@@ -179,9 +215,11 @@ class TtsPlaybackService : Service() {
             ttsManager.playbackInfo.collectLatest { info ->
                 updateMediaSessionState(info)
                 if (info.state == TtsState.PLAYING) {
+                    registerBecomingNoisy()
                     val notif = buildNotification(info)
                     startForegroundCompat(notif)
                 } else if (info.state == TtsState.PAUSED) {
+                    unregisterBecomingNoisy()
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                         stopForeground(STOP_FOREGROUND_DETACH)
                     } else {
@@ -190,6 +228,7 @@ class TtsPlaybackService : Service() {
                     }
                     updateNotification(info)
                 } else if (info.state == TtsState.IDLE || info.state == TtsState.ERROR) {
+                    unregisterBecomingNoisy()
                     stopForegroundNotification()
                     stopSelf()
                 }
@@ -277,6 +316,9 @@ class TtsPlaybackService : Service() {
     private fun buildNotification(info: TtsPlaybackInfo): Notification {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("OPEN_READER", true)
+            putExtra("NOVEL_ID", info.novelId)
+            putExtra("CHAPTER_ID", info.chapterId)
         }
         val openAppPendingIntent = PendingIntent.getActivity(
             this,
@@ -380,12 +422,22 @@ class TtsPlaybackService : Service() {
             builder.style = mediaStyle
         }
 
-        // Actions: 0 = Prev (⏮), 1 = Next (⏭), 2 = Close (✕)
+        // Actions: 0 = Prev (⏮), 1 = Play/Pause (⏯), 2 = Next (⏭), 3 = Close (✕)
         builder.addAction(
             Notification.Action.Builder(
                 R.drawable.ic_tts_prev,
                 "Previous",
                 prevPendingIntent
+            ).build()
+        )
+
+        val playPauseIcon = if (isPlaying) R.drawable.ic_tts_pause else R.drawable.ic_tts_play
+        val playPauseTitle = if (isPlaying) "Pause" else "Play"
+        builder.addAction(
+            Notification.Action.Builder(
+                playPauseIcon,
+                playPauseTitle,
+                togglePendingIntent
             ).build()
         )
 
@@ -422,6 +474,7 @@ class TtsPlaybackService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        unregisterBecomingNoisy()
         observerJob?.cancel()
         mediaSession?.isActive = false
         mediaSession?.release()

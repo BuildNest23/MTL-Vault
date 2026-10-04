@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 sealed class ReaderEvent {
@@ -33,8 +34,11 @@ class ReaderViewModel(
     initialChapterId: String,
     private val repository: NovelRepository,
     private val settingsDataStore: SettingsDataStore,
-    private val ttsManager: TtsManager
+    private val ttsManager: TtsManager,
+    val autoPlayTtsOnLoad: Boolean = false
 ) : ViewModel() {
+
+    private var hasAutoPlayed = false
 
     private val _currentChapterId = MutableStateFlow(initialChapterId)
     val currentChapterId: StateFlow<String> = _currentChapterId.asStateFlow()
@@ -65,26 +69,98 @@ class ReaderViewModel(
         ttsManager.onPrevChapterRequested = { prevChapter(autoPlay = true) }
     }
 
+    private val _initialParagraphIndex = MutableStateFlow<Int?>(null)
+    val initialParagraphIndex: StateFlow<Int?> = _initialParagraphIndex.asStateFlow()
+
+    private var lastScrollParagraphIndex: Int = 0
+    private var lastScrollIndex: Int = 0
+    private var lastScrollProgress: Float = 0f
+    private var lastSavedParagraph: Int = -1
+    private var lastSavedIndex: Int = -1
+    private var lastSavedProgress: Float = -1f
+
     fun loadChapter(chapterId: String) {
         _currentChapterId.value = chapterId
+        lastSavedIndex = -1
+        lastSavedParagraph = -1
+        lastSavedProgress = -1f
+        lastScrollIndex = 0
+        lastScrollParagraphIndex = 0
+        lastScrollProgress = 0f
         viewModelScope.launch {
             val chapter = repository.getChapterByIdSync(chapterId)
             _currentChapter.value = chapter
             if (chapter != null) {
+                val targetParagraph = if (chapter.readingParagraphIndex > 0) {
+                    chapter.readingParagraphIndex
+                } else {
+                    chapter.scrollPosition
+                }
+                _initialParagraphIndex.value = targetParagraph
+                lastScrollParagraphIndex = targetParagraph
+                lastScrollIndex = targetParagraph
                 _renderedContent.value = repository.getRenderedChapterContent(novelId, chapter)
                 repository.updateLastChapter(novelId, chapter.id)
+                if (autoPlayTtsOnLoad && !hasAutoPlayed) {
+                    hasAutoPlayed = true
+                    playCurrentChapterTts(startFromChunkIndex = targetParagraph)
+                }
+            }
+        }
+    }
+
+    fun updateReadingPosition(paragraphIndex: Int, scrollY: Int, scrollPercent: Float) {
+        lastScrollParagraphIndex = paragraphIndex
+        lastScrollIndex = scrollY
+        lastScrollProgress = scrollPercent
+
+        val chapter = _currentChapter.value ?: return
+
+        // Only write when the paragraph changed or progress changed by >= 1% (0.01f)
+        val isMeaningfulChange = lastSavedParagraph != paragraphIndex || kotlin.math.abs(lastSavedProgress - scrollPercent) >= 0.01f
+        if (!isMeaningfulChange) return
+
+        lastSavedParagraph = paragraphIndex
+        lastSavedIndex = scrollY
+        lastSavedProgress = scrollPercent
+
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateReadingPosition(chapter.id, paragraphIndex, scrollY)
+            if (scrollPercent >= 0.85f && !chapter.read) {
+                repository.setChapterRead(chapter.id, true)
+                _currentChapter.value = _currentChapter.value?.copy(read = true)
             }
         }
     }
 
     fun updateScrollPosition(scrollY: Int, scrollPercent: Float) {
+        val paragraphIndex = maxOf(0, scrollY - 1)
+        updateReadingPosition(paragraphIndex, scrollY, scrollPercent)
+    }
+
+    fun saveCurrentPositionNow() {
         val chapter = _currentChapter.value ?: return
-        viewModelScope.launch {
-            repository.updateScrollPosition(chapter.id, scrollY)
-            if (scrollPercent >= 0.85f && !chapter.read) {
+        if (lastSavedParagraph == lastScrollParagraphIndex && kotlin.math.abs(lastSavedProgress - lastScrollProgress) < 0.01f) {
+            return
+        }
+        lastSavedParagraph = lastScrollParagraphIndex
+        lastSavedIndex = lastScrollIndex
+        lastSavedProgress = lastScrollProgress
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateReadingPosition(chapter.id, lastScrollParagraphIndex, lastScrollIndex)
+            if (lastScrollProgress >= 0.85f && !chapter.read) {
                 repository.setChapterRead(chapter.id, true)
                 _currentChapter.value = _currentChapter.value?.copy(read = true)
             }
+        }
+    }
+
+    fun toggleReadStatus() {
+        val chapter = _currentChapter.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val newStatus = !chapter.read
+            repository.setChapterRead(chapter.id, newStatus)
+            _currentChapter.value = _currentChapter.value?.copy(read = newStatus)
         }
     }
 
@@ -133,7 +209,7 @@ class ReaderViewModel(
         }
     }
 
-    fun toggleTts() {
+    fun toggleTts(preferredParagraphIndex: Int? = null) {
         val info = ttsManager.playbackInfo.value
         val chapter = _currentChapter.value ?: return
 
@@ -145,11 +221,16 @@ class ReaderViewModel(
                 if (info.chapterId == chapter.id) {
                     ttsManager.resume()
                 } else {
-                    playCurrentChapterTts()
+                    val startIndex = preferredParagraphIndex ?: lastScrollParagraphIndex.coerceAtLeast(0)
+                    playCurrentChapterTts(startFromChunkIndex = startIndex)
                 }
             }
             else -> {
-                val startIndex = if (info.chapterId == chapter.id) info.currentChunkIndex else 0
+                val startIndex = if (info.chapterId == chapter.id && info.currentChunkIndex > 0) {
+                    info.currentChunkIndex
+                } else {
+                    preferredParagraphIndex ?: lastScrollParagraphIndex.coerceAtLeast(0)
+                }
                 playCurrentChapterTts(startFromChunkIndex = startIndex)
             }
         }
@@ -246,6 +327,7 @@ class ReaderViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        saveCurrentPositionNow()
         ttsManager.onNextChapterRequested = null
         ttsManager.onPrevChapterRequested = null
     }

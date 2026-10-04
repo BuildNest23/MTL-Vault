@@ -59,6 +59,7 @@ object BackupRestoreManager {
                 chObj.put("read", ch.read)
                 chObj.put("readAt", ch.readAt ?: JSONObject.NULL)
                 chObj.put("scrollPosition", ch.scrollPosition)
+                chObj.put("readingParagraphIndex", ch.readingParagraphIndex)
                 chObj.put("createdAt", ch.createdAt)
                 chObj.put("updatedAt", ch.updatedAt)
                 chaptersArray.put(chObj)
@@ -128,6 +129,7 @@ object BackupRestoreManager {
                         val chObj = chaptersArray.getJSONObject(j)
                         val chId = chObj.optString("id", "c_${System.currentTimeMillis()}_${j}")
                         val savedProgress = progressObj?.optInt(chId, 0) ?: chObj.optInt("scrollPosition", 0)
+                        val readingParagraphIndex = chObj.optInt("readingParagraphIndex", 0)
                         val content = chObj.optString("content", "")
                         val wc = if (chObj.has("wordCount")) chObj.getInt("wordCount") else ChapterSplitter.countWords(content)
 
@@ -139,6 +141,7 @@ object BackupRestoreManager {
                             content = content,
                             wordCount = wc,
                             scrollPosition = savedProgress,
+                            readingParagraphIndex = readingParagraphIndex,
                             read = chObj.optBoolean("read", false),
                             readAt = if (chObj.isNull("readAt")) null else chObj.optLong("readAt"),
                             createdAt = chObj.optLong("createdAt", System.currentTimeMillis()),

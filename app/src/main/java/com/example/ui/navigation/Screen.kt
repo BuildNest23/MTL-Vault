@@ -9,8 +9,9 @@ sealed class Screen(val route: String) {
         fun createRoute(novelId: String) = "novel/$novelId"
     }
 
-    object Reader : Screen("reader/{novelId}/{chapterId}") {
-        fun createRoute(novelId: String, chapterId: String) = "reader/$novelId/$chapterId"
+    object Reader : Screen("reader/{novelId}/{chapterId}?autoPlay={autoPlay}") {
+        fun createRoute(novelId: String, chapterId: String, autoPlay: Boolean = false) =
+            "reader/$novelId/$chapterId?autoPlay=$autoPlay"
     }
 
     object ChapterEditor : Screen("editor/{novelId}?chapterId={chapterId}") {

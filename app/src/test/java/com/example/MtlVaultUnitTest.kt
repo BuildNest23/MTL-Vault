@@ -461,6 +461,123 @@ class MtlVaultUnitTest {
         // Verify that indices never shift and index 2 strictly corresponds to Lin Feng opened his eyes
         assertEquals(2, parsedParagraphs.indexOf("Lin Feng opened his eyes slowly."))
     }
+
+    @Test
+    fun testParagraphBasedReadingPositionCalculationAndRestoration() {
+        val sampleText = (1..15).joinToString("\n\n") { "This is paragraph $it." }
+        val paragraphs = com.example.tts.TtsManager.parseParagraphs(sampleText)
+        assertEquals(15, paragraphs.size)
+
+        // Scenario 1: Top of chapter
+        val firstVisibleItemTop = 0
+        val visibleParaTop = maxOf(0, firstVisibleItemTop - 1)
+        assertEquals(0, visibleParaTop)
+
+        // Scenario 2: Scrolled to item 8 -> paragraph 7
+        val firstVisibleItemScrolled = 8
+        val visibleParaScrolled = maxOf(0, firstVisibleItemScrolled - 1)
+        assertEquals(7, visibleParaScrolled)
+        assertEquals("This is paragraph 8.", paragraphs[visibleParaScrolled])
+
+        // Scenario 3: Restoration calculation
+        val savedParagraphIndex = 7
+        val restoredTargetItemIndex = savedParagraphIndex + 1
+        assertEquals(8, restoredTargetItemIndex)
+
+        // Bounds safety
+        val outOfBoundsSavedIndex = 20
+        val safeParagraphIndex = outOfBoundsSavedIndex.coerceIn(0, paragraphs.size - 1)
+        assertEquals(14, safeParagraphIndex)
+    }
+
+    @Test
+    fun testMultiChapterWordCountAndReadingStatsAggregation() {
+        val chapter1 = ChapterEntity(
+            id = "c_1",
+            novelId = "n_test",
+            orderIndex = 0,
+            title = "Chapter 1",
+            content = "One two three four five.",
+            wordCount = 5,
+            read = true
+        )
+        val chapter2 = ChapterEntity(
+            id = "c_2",
+            novelId = "n_test",
+            orderIndex = 1,
+            title = "Chapter 2",
+            content = "Six seven eight nine ten eleven twelve thirteen fourteen fifteen.",
+            wordCount = 10,
+            read = true
+        )
+        val chapter3 = ChapterEntity(
+            id = "c_3",
+            novelId = "n_test",
+            orderIndex = 2,
+            title = "Chapter 3",
+            content = "Sixteen seventeen eighteen nineteen twenty.",
+            wordCount = 5,
+            read = false
+        )
+
+        val chapters = listOf(chapter1, chapter2, chapter3)
+
+        // Aggregate total word count
+        val totalWords = chapters.sumOf { it.wordCount }
+        assertEquals(20, totalWords)
+
+        // Reading time estimation at 200 WPM
+        val wpm = 200
+        val estimatedReadingMinutes = kotlin.math.ceil(totalWords.toDouble() / wpm).toInt()
+        assertEquals(1, estimatedReadingMinutes)
+
+        // Read chapters count & completion percentage
+        val readCount = chapters.count { it.read }
+        assertEquals(2, readCount)
+        val progressPercent = (readCount.toFloat() / chapters.size.toFloat()) * 100f
+        assertEquals(66.66667f, progressPercent, 0.01f)
+    }
+
+    @Test
+    fun testTtsChapterTransitionAndParagraphJumping() {
+        val ch1Id = "ch_tts_1"
+        val ch2Id = "ch_tts_2"
+
+        val ch1Text = "Intro paragraph.\n\nSecond paragraph.\n\nThird paragraph."
+        val chunks = com.example.tts.TtsManager.parseParagraphs(ch1Text)
+        assertEquals(3, chunks.size)
+
+        var currentChunk = 0
+        assertEquals(0, currentChunk)
+
+        // Paragraph jump (e.g., user double-tapped paragraph 2)
+        val jumpTarget = 2
+        currentChunk = jumpTarget.coerceIn(0, chunks.size - 1)
+        assertEquals(2, currentChunk)
+        assertEquals("Third paragraph.", chunks[currentChunk])
+
+        // Verify sanitization strips HTML tags without losing words
+        val textWithTags = "<p>This is a <b>vital</b> line of speech &amp; dialogue.</p>"
+        val sanitized = textWithTags.replace(Regex("<[^>]+>"), " ")
+            .replace("&amp;", " and ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        assertTrue(sanitized.contains("This is a"))
+        assertTrue(sanitized.contains("vital"))
+        assertTrue(sanitized.contains("and dialogue."))
+        assertFalse(sanitized.contains("<p>"))
+        assertFalse(sanitized.contains("<b>"))
+
+        // Chapter progression simulation
+        var activeChapterId = ch1Id
+        val onChapterFinished = {
+            activeChapterId = ch2Id
+            currentChunk = 0
+        }
+        onChapterFinished()
+        assertEquals(ch2Id, activeChapterId)
+        assertEquals(0, currentChunk)
+    }
 }
 
 

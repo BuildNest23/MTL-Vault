@@ -47,4 +47,7 @@ interface NovelDao {
 
     @Query("SELECT COUNT(*) FROM novels")
     fun getNovelCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM novels")
+    suspend fun getNovelCountSync(): Int
 }

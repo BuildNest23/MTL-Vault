@@ -1,7 +1,13 @@
 package com.example.ui.screens.reader
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -25,13 +31,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -50,12 +60,17 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -94,12 +109,25 @@ fun ReaderScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val ttsInfo by viewModel.ttsPlaybackInfo.collectAsStateWithLifecycle()
     val chaptersList by viewModel.chaptersList.collectAsStateWithLifecycle()
+    val initialParagraphIndex by viewModel.initialParagraphIndex.collectAsStateWithLifecycle()
 
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showChapterPicker by remember { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
 
-    val scrollState = rememberScrollState()
+    val lazyListState = rememberLazyListState()
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* Gracefully proceed whether granted or denied */ }
+
+    val requestNotificationPermissionIfNeeded = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
 
     BackHandler {
         onBackClick()
@@ -114,27 +142,128 @@ fun ReaderScreen(
         }
     }
 
-    // Restore scroll position on chapter change
-    LaunchedEffect(chapter?.id) {
-        chapter?.let { ch ->
-            if (ch.scrollPosition > 0) {
-                scrollState.scrollTo(ch.scrollPosition)
+    LaunchedEffect(viewModel.autoPlayTtsOnLoad) {
+        if (viewModel.autoPlayTtsOnLoad) {
+            requestNotificationPermissionIfNeeded()
+        }
+    }
+
+    val paragraphs = remember(renderedContent) {
+        TtsManager.parseParagraphs(renderedContent)
+    }
+
+    // Restore scroll position on chapter change / initial load to saved paragraph
+    var hasRestoredPositionForChapter by remember(chapter?.id) { mutableStateOf(false) }
+    LaunchedEffect(chapter?.id, paragraphs.size, initialParagraphIndex) {
+        val currChapter = chapter
+        if (currChapter != null && paragraphs.isNotEmpty() && !hasRestoredPositionForChapter) {
+            val targetPara = initialParagraphIndex ?: (if (currChapter.readingParagraphIndex > 0) currChapter.readingParagraphIndex else currChapter.scrollPosition)
+            if (targetPara > 0 && targetPara < paragraphs.size) {
+                // Item 0 is header_title, item 1 is para 0, item k + 1 is para k
+                val targetItemIndex = targetPara + 1
+                lazyListState.scrollToItem(targetItemIndex, 0)
             } else {
-                scrollState.scrollTo(0)
+                lazyListState.scrollToItem(0, 0)
+            }
+            hasRestoredPositionForChapter = true
+        }
+    }
+
+    // Track reading progress from LazyListState via derivedStateOf
+    // Track reading progress accurately across the entire scrollable range
+    val scrollProgress by remember(paragraphs.size) {
+        derivedStateOf {
+            val totalItems = paragraphs.size + 2
+            if (totalItems <= 1 || paragraphs.isEmpty()) return@derivedStateOf 0f
+
+            val layoutInfo = lazyListState.layoutInfo
+            val visibleItems = layoutInfo.visibleItemsInfo
+            if (visibleItems.isEmpty()) return@derivedStateOf 0f
+
+            // If at the absolute bottom (cannot scroll forward or footer bottom reached)
+            if (!lazyListState.canScrollForward && lazyListState.canScrollBackward) {
+                return@derivedStateOf 1.0f
+            }
+            // If at the absolute top (cannot scroll backward and at index 0 offset 0)
+            if (!lazyListState.canScrollBackward && lazyListState.firstVisibleItemIndex == 0 && lazyListState.firstVisibleItemScrollOffset == 0) {
+                return@derivedStateOf 0.0f
+            }
+
+            // Check if the last item (footer nav) is visible
+            val lastVisible = visibleItems.last()
+            if (lastVisible.index == totalItems - 1) {
+                val bottomCutoff = lastVisible.offset + lastVisible.size
+                if (bottomCutoff <= layoutInfo.viewportEndOffset) {
+                    return@derivedStateOf 1.0f
+                }
+            }
+
+            // Calculate progress based on position in total scrollable items
+            val visibleCount = visibleItems.size
+            val maxScrollableIndex = (totalItems - visibleCount).coerceAtLeast(1)
+            val firstIndex = lazyListState.firstVisibleItemIndex
+            val firstOffset = lazyListState.firstVisibleItemScrollOffset
+            val itemInfo = visibleItems.firstOrNull { it.index == firstIndex }
+            val itemSize = itemInfo?.size?.takeIf { it > 0 } ?: 1
+            val fractionWithinItem = (firstOffset.toFloat() / itemSize.toFloat()).coerceIn(0f, 1f)
+            val currentScrollPos = firstIndex.toFloat() + fractionWithinItem
+
+            (currentScrollPos / maxScrollableIndex.toFloat()).coerceIn(0f, 1f)
+        }
+    }
+
+    // Observe scroll changes with snapshotFlow, debounce (800ms), and distinctUntilChanged
+    @OptIn(FlowPreview::class)
+    LaunchedEffect(lazyListState, paragraphs.size) {
+        snapshotFlow {
+            val firstItem = lazyListState.firstVisibleItemIndex
+            val paragraphIndex = maxOf(0, firstItem - 1)
+            Triple(paragraphIndex, firstItem, scrollProgress)
+        }
+            .distinctUntilChanged { old, new ->
+                // Paragraph unchanged and progress difference is less than 1% (0.01f)
+                old.first == new.first && kotlin.math.abs(old.third - new.third) < 0.01f
+            }
+            .debounce(800)
+            .collect { (paragraphIndex, firstItem, progress) ->
+                viewModel.updateReadingPosition(paragraphIndex, firstItem, progress)
+            }
+    }
+
+    // Save reading position when screen leaves / on dispose
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.saveCurrentPositionNow()
+        }
+    }
+
+    // Auto-scroll when TTS moves to a new paragraph, ensuring partially visible paragraphs also scroll up
+    LaunchedEffect(ttsInfo.currentChunkIndex, ttsInfo.chapterId, chapter?.id) {
+        if ((ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED) &&
+            ttsInfo.chapterId == chapter?.id
+        ) {
+            val targetItemIndex = ttsInfo.currentChunkIndex + 1
+            if (targetItemIndex in 0 until (paragraphs.size + 2)) {
+                val layoutInfo = lazyListState.layoutInfo
+                val visibleItem = layoutInfo.visibleItemsInfo.find { it.index == targetItemIndex }
+
+                // Comfortable viewport margins accounting for top bar and bottom reader controls
+                val topMargin = layoutInfo.viewportStartOffset + 50
+                val bottomMargin = layoutInfo.viewportEndOffset - 140
+                val availableHeight = bottomMargin - topMargin
+
+                val isComfortablyVisible = visibleItem != null &&
+                        if (visibleItem.size > availableHeight) {
+                            visibleItem.offset in (topMargin - 40)..(topMargin + 100)
+                        } else {
+                            visibleItem.offset >= topMargin && (visibleItem.offset + visibleItem.size) <= bottomMargin
+                        }
+
+                if (!isComfortablyVisible) {
+                    lazyListState.animateScrollToItem(targetItemIndex)
+                }
             }
         }
-    }
-
-    // Track reading progress
-    val scrollProgress by remember {
-        derivedStateOf {
-            val max = scrollState.maxValue
-            if (max > 0) (scrollState.value.toFloat() / max.toFloat()).coerceIn(0f, 1f) else 0f
-        }
-    }
-
-    LaunchedEffect(scrollState.value) {
-        viewModel.updateScrollPosition(scrollState.value, scrollProgress)
     }
 
     // Determine colors based on reading theme
@@ -145,86 +274,130 @@ fun ReaderScreen(
         else -> Triple(ReaderLightBg, ReaderLightText, Color(0xFFFFFFFF))
     }
 
+    val primaryContainer = MaterialTheme.colorScheme.primaryContainer
+    val highlightBg = remember(settings.theme, primaryContainer) {
+        when (settings.theme) {
+            "sepia" -> Color(0xFFECD7B2)
+            "dark" -> Color(0xFF3B352A)
+            "night" -> Color(0xFF282828)
+            else -> primaryContainer.copy(alpha = 0.45f)
+        }
+    }
+
     val readerFontFamily = if (settings.fontFamily == "sans") FontFamily.SansSerif else FontFamily.Serif
+
+    val paragraphTextStyle = remember(readerFontFamily, settings.fontSize, settings.lineHeight, textColor) {
+        TextStyle(
+            fontFamily = readerFontFamily,
+            fontSize = settings.fontSize.sp,
+            lineHeight = (settings.fontSize * settings.lineHeight).sp,
+            color = textColor
+        )
+    }
+
+    val titleTextStyle = remember(readerFontFamily, textColor) {
+        TextStyle(
+            fontFamily = readerFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 24.sp,
+            color = textColor,
+            textAlign = TextAlign.Center
+        )
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(bgColor)
     ) {
-        // Content Area
-        Column(
+        // Content Area with LazyColumn for high performance
+        LazyColumn(
+            state = lazyListState,
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(scrollState)
-                .clickable { controlsVisible = !controlsVisible }
-                .padding(horizontal = 20.dp, vertical = 60.dp),
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    controlsVisible = !controlsVisible
+                },
+            contentPadding = PaddingValues(
+                horizontal = 20.dp,
+                vertical = 60.dp
+            ),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
+            item(key = "header_title") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = settings.maxWidth.dp)
+                        .padding(top = 24.dp, bottom = 28.dp)
+                ) {
+                    Text(
+                        text = chapter?.title ?: "Chapter",
+                        style = titleTextStyle,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
 
-            // Text constrained by settings.maxWidth for tablet/foldable readability
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = settings.maxWidth.dp)
-            ) {
-                Text(
-                    text = chapter?.title ?: "Chapter",
-                    style = MaterialTheme.typography.headlineMedium.copy(
-                        fontFamily = readerFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        color = textColor,
-                        textAlign = TextAlign.Center
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
+            items(
+                count = paragraphs.size,
+                key = { paraIndex -> "para_$paraIndex" }
+            ) { paraIndex ->
+                val paragraph = paragraphs[paraIndex]
+                val isReadingThis = (ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED) &&
+                        ttsInfo.currentChunkIndex == paraIndex &&
+                        ttsInfo.chapterId == chapter?.id
 
-                Spacer(modifier = Modifier.height(28.dp))
-
-                val paragraphs = remember(renderedContent) {
-                    TtsManager.parseParagraphs(renderedContent)
+                @OptIn(ExperimentalFoundationApi::class)
+                val paraModifier = if (isReadingThis) {
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(highlightBg)
+                        .border(
+                            width = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .combinedClickable(
+                            onClick = { controlsVisible = !controlsVisible },
+                            onDoubleClick = {
+                                requestNotificationPermissionIfNeeded()
+                                viewModel.playFromParagraph(paraIndex)
+                            },
+                            onLongClick = {
+                                requestNotificationPermissionIfNeeded()
+                                viewModel.playFromParagraph(paraIndex)
+                            }
+                        )
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                } else {
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .combinedClickable(
+                            onClick = { controlsVisible = !controlsVisible },
+                            onDoubleClick = {
+                                requestNotificationPermissionIfNeeded()
+                                viewModel.playFromParagraph(paraIndex)
+                            },
+                            onLongClick = {
+                                requestNotificationPermissionIfNeeded()
+                                viewModel.playFromParagraph(paraIndex)
+                            }
+                        )
+                        .padding(horizontal = 4.dp, vertical = 4.dp)
                 }
 
-                paragraphs.forEachIndexed { paraIndex, paragraph ->
-                    val isReadingThis = (ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED) &&
-                            ttsInfo.currentChunkIndex == paraIndex &&
-                            ttsInfo.chapterId == chapter?.id
-
-                    val highlightBg = when (settings.theme) {
-                        "sepia" -> Color(0xFFECD7B2)
-                        "dark" -> Color(0xFF3B352A)
-                        "night" -> Color(0xFF282828)
-                        else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                    }
-
-                    @OptIn(ExperimentalFoundationApi::class)
-                    val paraModifier = if (isReadingThis) {
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(highlightBg)
-                            .border(
-                                width = 2.dp,
-                                color = MaterialTheme.colorScheme.primary,
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                            .combinedClickable(
-                                onClick = { controlsVisible = !controlsVisible },
-                                onDoubleClick = { viewModel.playFromParagraph(paraIndex) }
-                            )
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                    } else {
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .combinedClickable(
-                                onClick = { controlsVisible = !controlsVisible },
-                                onDoubleClick = { viewModel.playFromParagraph(paraIndex) }
-                            )
-                            .padding(horizontal = 4.dp, vertical = 4.dp)
-                    }
-
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = settings.maxWidth.dp)
+                        .padding(bottom = 10.dp)
+                ) {
                     Box(modifier = paraModifier) {
                         Row(
                             verticalAlignment = Alignment.Top,
@@ -242,45 +415,75 @@ fun ReaderScreen(
                             }
                             Text(
                                 text = paragraph,
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontFamily = readerFontFamily,
-                                    fontSize = settings.fontSize.sp,
-                                    lineHeight = (settings.fontSize * settings.lineHeight).sp,
-                                    color = textColor
-                                ),
+                                style = paragraphTextStyle,
                                 modifier = Modifier.weight(1f)
                             )
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(10.dp))
                 }
+            }
 
-                Spacer(modifier = Modifier.height(40.dp))
-
-                // End of chapter navigation buttons
-                Row(
+            item(key = "footer_nav") {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .widthIn(max = settings.maxWidth.dp)
+                        .padding(top = 40.dp, bottom = 100.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    TextButton(
-                        onClick = { viewModel.prevChapter() },
-                        modifier = Modifier.testTag("reader_end_prev_button")
+                    // Visual status indicator
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (chapter?.read == true) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (chapter?.read == true) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                        ),
+                        modifier = Modifier.clickable { viewModel.toggleReadStatus() }
                     ) {
-                        Text("← Prev Chapter", color = textColor)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (chapter?.read == true) Icons.Default.CheckCircle else Icons.Default.Check,
+                                contentDescription = null,
+                                tint = if (chapter?.read == true) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (chapter?.read == true) "Chapter Completed (Tap to toggle)" else "Mark as Read",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (chapter?.read == true) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
 
-                    TextButton(
-                        onClick = { viewModel.nextChapter() },
-                        modifier = Modifier.testTag("reader_end_next_button")
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Next Chapter →", color = textColor)
+                        TextButton(
+                            onClick = { viewModel.prevChapter() },
+                            modifier = Modifier.testTag("reader_end_prev_button")
+                        ) {
+                            Text("← Prev Chapter", color = textColor)
+                        }
+
+                        TextButton(
+                            onClick = { viewModel.nextChapter() },
+                            modifier = Modifier.testTag("reader_end_next_button")
+                        ) {
+                            Text("Next Chapter →", color = textColor)
+                        }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(100.dp))
             }
         }
 
@@ -293,18 +496,52 @@ fun ReaderScreen(
         ) {
             TopAppBar(
                 title = {
-                    Text(
-                        text = chapter?.title ?: "Chapter",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = textColor
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .clickable { showChapterPicker = true }
                             .padding(vertical = 4.dp)
-                    )
+                    ) {
+                        Text(
+                            text = chapter?.title ?: "Chapter",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = textColor
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+
+                        if (chapter?.read == true) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFFE8F5E9),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF4CAF50).copy(alpha = 0.7f)),
+                                modifier = Modifier.clickable { viewModel.toggleReadStatus() }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Read",
+                                        tint = Color(0xFF2E7D32),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "Read",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF2E7D32)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(
@@ -347,14 +584,20 @@ fun ReaderScreen(
             )
         }
 
-        // Fixed bottom reading progress bar
+        // Fixed bottom reading progress bar - turns all green when read or >= 85%
+        val progressColor = if (scrollProgress >= 0.85f || chapter?.read == true) {
+            Color(0xFF4CAF50)
+        } else {
+            MaterialTheme.colorScheme.primary
+        }
+
         LinearProgressIndicator(
             progress = { scrollProgress },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(4.dp)
                 .align(Alignment.BottomCenter),
-            color = MaterialTheme.colorScheme.primary,
+            color = progressColor,
             trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
             strokeCap = StrokeCap.Square
         )
@@ -373,7 +616,11 @@ fun ReaderScreen(
                 playbackInfo = ttsInfo,
                 speechRate = settings.ttsRate,
                 speechPitch = settings.ttsPitch,
-                onPlayPause = { viewModel.toggleTts() },
+                onPlayPause = {
+                    requestNotificationPermissionIfNeeded()
+                    val visiblePara = maxOf(0, lazyListState.firstVisibleItemIndex - 1)
+                    viewModel.toggleTts(visiblePara)
+                },
                 onStop = { viewModel.stopTts() },
                 onPrevChapter = { viewModel.prevChapter() },
                 onNextChapter = { viewModel.nextChapter() },

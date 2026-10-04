@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -82,6 +83,7 @@ fun NovelDetailScreen(
     viewModel: NovelDetailViewModel,
     onBackClick: () -> Unit,
     onOpenReader: (String) -> Unit,
+    onPlayNovel: (String) -> Unit,
     onOpenEditor: (String?) -> Unit,
     onOpenReplacements: () -> Unit
 ) {
@@ -364,6 +366,40 @@ fun NovelDetailScreen(
                                 Text("Rules ($rulesCount)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             }
 
+                            val targetChapter = remember(chapters, currentNovel.lastChapterId) {
+                                val lastId = currentNovel.lastChapterId
+                                if (!lastId.isNullOrBlank()) {
+                                    chapters.find { it.id == lastId }
+                                } else {
+                                    chapters.firstOrNull { !it.read } ?: chapters.firstOrNull()
+                                } ?: chapters.firstOrNull()
+                            }
+
+                            Button(
+                                onClick = {
+                                    if (targetChapter != null) {
+                                        onPlayNovel(targetChapter.id)
+                                    } else {
+                                        Toast.makeText(context, "No chapters available to play", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                enabled = chapters.isNotEmpty(),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .testTag("detail_play_novel_button"),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Play", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                            }
+
                             OutlinedButton(
                                 onClick = {
                                     val safeName = currentNovel.title.replace(Regex("[^a-zA-Z0-9.-]"), "_").trim('_')
@@ -487,13 +523,27 @@ fun NovelDetailScreen(
             // Chapters List
             if (chapters.isEmpty()) {
                 item {
-                    EmptyState(
-                        icon = Icons.Default.Book,
-                        title = "No chapters yet",
-                        message = "Add your first chapter or import text from a translated .txt file.",
-                        actionText = "+ Add Chapter",
-                        onActionClick = { onOpenEditor(null) }
-                    )
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        EmptyState(
+                            icon = Icons.Default.Book,
+                            title = "No chapters yet",
+                            message = "Add your first chapter or import text from a translated .txt file.",
+                            actionText = "+ Add Chapter",
+                            onActionClick = { onOpenEditor(null) }
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = { viewModel.addSampleChapters() },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Load Example Chapters")
+                        }
+                    }
                 }
             } else {
                 itemsIndexed(

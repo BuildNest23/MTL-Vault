@@ -1,209 +1,111 @@
-# MTL Vault - Native Android Novel Library & Reader
+# Performance & Architecture Improvements Plan
 
-An offline-first, native Android novel library and reader designed to store, organize, edit, and read machine-translated and custom novels. It features native Android Text-to-Speech (TTS) with paragraph-aware chunking and background playback, per-novel regex/text replacement rules, multi-strategy chapter splitting, and a ClassGrid-inspired Material 3 aesthetic.
+A 6-step plan to significantly boost reading performance, smooth scroll framerate, reduce database writes, ensure backward-compatible schema migrations, optimize library queries, and modernize build configuration without changing existing UI design, gestures, or visual themes.
 
 ---
 
-## User Review & Critical Decisions
+### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following decisions were confirmed during Phase 1 clarification:
-> - **TTS Background Playback**: Enabled with Android audio focus management, allowing continuous listening when switching apps or locking the screen, with automatic progress tracking.
-> - **Initial Library State**: Fresh, clean zero-state with informative onboarding tips and quick actions to create or import novels.
-> - **Color Theme & Visual System**: Forest Jade primary palette (`#2F6F4E` / `#4E9670`) paired with ClassGrid-style warm cream/dark surfaces, supporting Light, Warm Sepia, Dark, and True Black (OLED Night) reader themes.
+> **Execution Strategy**:
+> - As confirmed, we will execute **Step 1 first**, run verification in the emulator, and await your confirmation before moving to each subsequent step.
+> - **Paragraph parsing**: Using the standard novel paragraph parser (`TtsManager.parseParagraphs`) with stable item keys.
 
 ---
 
-## 1. Overview & Core Concept
+### Risk & Compatibility Analysis ("Will this break anything?")
 
-- **What It Does**: MTL Vault provides a local-first vault for web novels and translated fiction. Users can create novels, import raw `.txt` files with intelligent chapter boundary detection, edit chapters with live statistics, read in an immersive typography-focused reader, apply search-and-replace terminology rules, and listen via Android's native `TextToSpeech` engine.
-- **Target Audience**: Readers and translators of web novels, light novels, and machine-translated (MTL) literature who need an offline personal library with custom terminology corrections and hands-free listening.
-- **Key Value**: Replaces unwieldy web reader workflows with a native Android experience—instant cold boot, zero network latency, persistent reading positions, smooth 60fps scrolling for multi-thousand word chapters, and background TTS.
-
----
-
-## 2. User Experience & Visual Design
-
-### Design Direction (ClassGrid Synergy)
-Inspired by the ClassGrid Android reference, MTL Vault adopts:
-- **Spatial Hierarchy**: Generous content paddings (16dp), rounded card contours (16dp shape radius), and distinct tonal elevation layers without heavy borders.
-- **M3 Navigation**: Fixed bottom navigation bar with active pill indicators for **Library**, **Stats**, and **Settings**, seamlessly hiding when entering full-screen Reader mode.
-- **Micro-interactions & Surfaces**: Material 3 ripples, subtle spring animations on sheet presentation, and tactile status indicators (word count chips, read badges, progress bars).
-
-### Color Themes & Tokens
-1. **App Shell**:
-   - Light: Warm paper surface (`#FBF9F4`), card surface (`#FFFFFF`), primary forest jade (`#2F6F4E`), muted text (`#6E6656`).
-   - Dark: Charcoal surface (`#161616`), card surface (`#1E1E1E`), primary jade tint (`#7DC79A`), muted text (`#A79B85`).
-2. **Reader Themes**:
-   - **Light**: Crisp editorial layout with Georgia/Serif and warm white background.
-   - **Sepia**: Eye-friendly parchment (`#F4ECD8`) with deep brown ink (`#3A2E1A`).
-   - **Dark**: Low-glare dark charcoal (`#1C1B18`) with softened cream glyphs (`#EFE9DD`).
-   - **OLED Night**: Pure pitch black (`#000000`) with muted silver typography (`#B8B8B8`) to conserve battery.
-
-### Key Screens & User Flows
-
-```
-┌────────────────────────────────────────────────────────┐
-│                      Bottom Nav                        │
-│        [Library]        [Stats]        [Settings]      │
-└───────────┬────────────────────────────────────────────┘
-            │
-            ▼
-┌─────────────────────────┐      ┌─────────────────────────┐
-│       Library View      │      │     Novel Details       │
-│  - Novel Cards          │ ───► │  - Chapter List         │
-│  - Progress Bars        │      │  - Multi-select actions │
-│  - + New / Import File  │      │  - Replacement Rules    │
-└─────────────────────────┘      └───────────┬─────────────┘
-                                             │
-                       ┌─────────────────────┴─────────────────────┐
-                       ▼                                           ▼
-         ┌───────────────────────────┐               ┌───────────────────────────┐
-         │        Reader View        │               │      Chapter Editor       │
-         │ - Tap-to-toggle top/bottom│               │ - Title & long content    │
-         │ - Compact TTS Bar         │               │ - Real-time word counter  │
-         │ - Sepia / Night / Dark    │               │ - Discard / Save actions  │
-         │ - Aa Typography Sheet     │               └───────────────────────────┘
-         └───────────────────────────┘
-```
-
-1. **Library Screen**:
-   - Displays novel cards showing title, author/translator, chapter count, read completion percentage, and last-read chapter bookmark.
-   - Action bar for **+ New Novel**, **📁 Import File**, and **📥 Paste Import**.
-   - Engaging empty-library illustration with instructions for first-time users.
-2. **Novel Details Screen**:
-   - Header with cover art icon, metadata, cumulative words, and reading progress bar.
-   - Action chips for **Add Chapter**, **Import**, **Export .txt**, **Replacements (Rule Count)**, and **Share**.
-   - Performant `LazyColumn` chapter list with read checkboxes, word counts, and long-press selection mode for bulk export/sharing.
-3. **Immersive Reader Screen**:
-   - Edge-to-edge reading with dynamic top bar and bottom scroll progress bar.
-   - Floating compact TTS bar: `[Prev Chapter | Play / Pause | Stop | Next Chapter]` with collapsible sliders for Speech Rate (0.5x–2.5x) and Pitch.
-   - `Aa` Appearance modal: Theme selection (Light/Sepia/Dark/Night), Font Size (12sp–36sp), Line Spacing (1.2–2.2), and Font Family (Serif / Sans-serif).
-   - Reading position automatically memorized on scroll and restored upon return.
-4. **Chapter Editor Screen**:
-   - Optimized for large text handling with live word count calculation and reading time estimate.
-   - Auto-titled with smart numbering (e.g., detecting "Chapter 5" to suggest "Chapter 6").
-5. **Replacements Management**:
-   - Per-novel terminology rules (e.g. `Elder = Senior`, `[cs] Lord = Lord God`, `[nww] mana = Mana`).
-   - Live testing preview box: users paste sample text and see rules applied in real time without altering source database entries.
-6. **Statistics Screen**:
-   - Summary metric cards (Total Novels, Total Chapters, Chapters Read, Total Word Count, and Estimated Reading Time).
-   - Per-novel progress breakdown cards.
-7. **Settings Screen**:
-   - Global default reader typography and reading theme presets.
-   - Global toggle for text replacements.
-   - JSON Full Backup export & restore (compatible with MTL Vault web export structure).
+| Step | Scope | Potential Risk | Mitigation in Plan |
+| :--- | :--- | :--- | :--- |
+| **Step 1: Reader LazyColumn** | `ReaderScreen.kt` | Item index offset (+1 for title) breaking TTS highlight or scroll-to-paragraph; gesture capture interference (single-tap menu toggle vs. double-tap TTS) | Title is at index `0`, paragraphs at `1..N`, footer at `N+1`. TTS index `i` cleanly maps to `i + 1`. `combinedClickable` preserved on each item and background click. |
+| **Step 2: Debounced Position Save** | `ReaderScreen.kt`, `ReaderViewModel.kt` | Database write lag if user quickly exits app | `snapshotFlow` debounced to 800ms while scrolling; immediate save on `DisposableEffect` (screen exit) and `ViewModel.onCleared`. |
+| **Step 3: Position Restore & Migration** | `AppDatabase.kt`, `ChapterEntity.kt`, Backup/Restore | Room schema failure if `exportSchema = true` without KSP schema directory; database wipe if migration is missing; breaking old backups | Configure Room schema location; implement strict `Migration(1, 2)` adding default `0` columns; remove `fallbackToDestructiveMigration`; backward-compatible JSON parser handling missing fields. |
+| **Step 4: Library Query Optimization** | `NovelRepository.kt`, `NovelDao.kt` | Missing Flow updates when chapters marked as read | Single SQL query with `LEFT JOIN` and `GROUP BY` that Room observes on both `novels` and `chapters` tables, reactively refreshing on any read status change. |
+| **Step 5: Replacement Caching** | `ReplacementEngine.kt` | Memory leak or stale text when novel rules change | Thread-safe LRU cache with eviction keyed by `(novelId, rulesHash)`. Explicit invalidation when rules are updated. |
+| **Step 6: Build Config & Proguard** | `app/build.gradle.kts`, `proguard-rules.pro` | R8 stripping Room DAOs, Entities, or TTS Service | Add explicit `@Keep` and Proguard rules for Room, Kotlin serialization, and MediaSession services. Fall back release signing to debug keys when env vars are missing. |
 
 ---
 
-## 3. Key Product Decisions & Trade-Offs
+### System Architecture & Data Flow
 
-- **Decision 1: Native TextToSpeech Engine with Utterance Chunking**
-  - *Chosen Approach*: Use Android's `android.speech.tts.TextToSpeech` wrapped in a lifecycle-aware manager. Text is parsed into clean paragraph/sentence boundaries (under 3,500 characters per chunk) and dispatched via sequential utterance IDs with an `UtteranceProgressListener`.
-  - *Why*: Android TTS engines fail silently or throw errors when passed strings over 4,000 characters. Intelligent chunking ensures seamless narration through chapters of 10,000+ words.
-  - *Alternative Considered*: Android `MediaPlayer` with audio file rendering (rejected because offline TTS on arbitrary novel text must be synthesized on-the-fly).
-- **Decision 2: Room Local Database with Full Unicode & UTF-8 Support**
-  - *Chosen Approach*: SQLite via Room (`NovelEntity`, `ChapterEntity`) with foreign keys, cascade deletes, and indexing on `novelId` and `orderIndex`.
-  - *Why*: Web novel chapters often contain non-Latin scripts (Chinese, Japanese, Korean, Urdu, Arabic). Room with proper UTF-8 handling prevents text truncation or encoding corruption.
-- **Decision 3: Non-Destructive Text Replacements**
-  - *Chosen Approach*: Raw chapter text stored in Room remains pristine and untouched. Replacement rules are evaluated dynamically in-memory when loading content into the reader, TTS speech buffer, or export/share pipelines.
-  - *Why*: Avoids permanent data loss or accidental regex destruction of original chapter text.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       ReaderScreen                          │
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ LazyColumn (LazyListState)                            │  │
+│  │  ├─ Item 0: Chapter Title (key = "header_title")      │  │
+│  │  ├─ Items 1..N: Paragraphs (key = "para_idx")         │  │
+│  │  │   • Double-tap: Play TTS from paragraph            │  │
+│  │  │   • Single-tap: Toggle reading controls            │  │
+│  │  │   • Active TTS highlight + Auto-scroll into view   │  │
+│  │  └─ Item N+1: Prev / Next Buttons                     │  │
+│  └──────────────────────────┬────────────────────────────┘  │
+│                             │                               │
+│              derivedStateOf │ snapshotFlow (debounce 800ms) │
+│                             ▼                               │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │                  ReaderViewModel                      │  │
+│  │  • Save paragraph index + offset (survives font size) │  │
+│  │  • Single 85% read trigger without coroutine spam     │  │
+│  └──────────────────────────┬────────────────────────────┘  │
+└─────────────────────────────┼───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                        AppDatabase                          │
+│  • Migration(1, 2): scrollParagraph & scrollOffset          │
+│  • No destructive migration — library data 100% safe        │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 4. Technical Architecture & Data Strategy
+### Step-by-Step Implementation Roadmap
 
-### System Architecture Diagram
+#### Step 1: Reader Scroll Performance (`ReaderScreen.kt`) — *Executing Now*
+- Replace `Column` + `verticalScroll` with a high-performance `LazyColumn(state = lazyListState)`.
+- Use stable keys: `"header_title"`, `"para_$index"`, and `"footer_nav"`.
+- `remember` parsed paragraphs, typography styles, and theme highlight colors to prevent recomposition churn.
+- Compute reading progress using `derivedStateOf` from `firstVisibleItemIndex` and `firstVisibleItemScrollOffset`.
+- When TTS moves to a new chunk index, auto-scroll to `index + 1` with `animateScrollToItem`, but **only if off-screen**.
+- Retain all gesture interactions: single tap on content/background toggles controls; double-tap on paragraph triggers TTS.
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                          Jetpack Compose UI                            │
-│  LibraryScreen │ NovelDetailScreen │ ReaderScreen │ SettingsScreen    │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ UI State & User Events
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                          ViewModel Layer                               │
-│  LibraryViewModel │ NovelDetailViewModel │ ReaderViewModel │ StatsVM  │
-└──────────────┬────────────────────┬────────────────────┬───────────────┘
-               │                    │                    │
-               ▼                    ▼                    ▼
-┌───────────────────────────┐ ┌───────────────┐ ┌────────────────────────┐
-│     NovelRepository       │ │  TTS Engine   │ │   ReplacementEngine    │
-│  - AppDatabase (Room)     │ │  - TTSManager │ │  - Regex Rule Parser   │
-│  - NovelDao / ChapterDao  │ │  - ChunkQueue │ │  - In-Memory Matcher   │
-│  - DataStore Preferences  │ │  - AudioFocus │ │  - Whole-word Bounds   │
-└───────────────────────────┘ └───────────────┘ └────────────────────────┘
-```
+#### Step 2: Efficient Reading Position Saving (`ReaderScreen.kt`, `ReaderViewModel.kt`)
+- Throttle database position updates with `snapshotFlow` + `debounce(800ms)` + `distinctUntilChanged`.
+- Save immediately on screen exit (`DisposableEffect`) and ViewModel cleanup.
+- Track 85% reading progress flag in memory so mark-as-read executes exactly once per chapter.
 
-### Database Schema (Room)
+#### Step 3: Reliable Position Restore & Room Migration (v1 ➔ v2)
+- Add `scrollParagraph: Int = 0` and `scrollOffset: Int = 0` to `ChapterEntity`.
+- Create `Migration(1, 2)`:
+  `ALTER TABLE chapters ADD COLUMN scrollParagraph INTEGER NOT NULL DEFAULT 0`
+  `ALTER TABLE chapters ADD COLUMN scrollOffset INTEGER NOT NULL DEFAULT 0`
+- Remove `fallbackToDestructiveMigration` so user databases are never wiped.
+- Restore position only after paragraph list is populated and non-empty.
+- Update backup/restore JSON handlers to handle older backups safely with fallback defaults.
 
-```kotlin
-// Novel Entity
-@Entity(tableName = "novels")
-data class NovelEntity(
-    @PrimaryKey val id: String,
-    val title: String,
-    val author: String = "",
-    val translator: String = "",
-    val description: String = "",
-    val coverUri: String? = null,
-    val lastChapterId: String? = null,
-    val replacements: String = "",
-    val replacementsEnabled: Boolean = true,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
-)
+#### Step 4: Library Query Optimization (`NovelRepository.kt`, `NovelDao.kt`)
+- Eliminate N+1 loop queries in `getNovelSummaries`.
+- Implement a single SQL `SELECT` with `LEFT JOIN chapters GROUP BY novels.id` returning total chapters, read chapters, word count, and last chapter info.
+- Verify reactive Flow emission when a chapter's read status is updated.
 
-// Chapter Entity
-@Entity(
-    tableName = "chapters",
-    foreignKeys = [ForeignKey(
-        entity = NovelEntity::class,
-        parentColumns = ["id"],
-        childColumns = ["novelId"],
-        onDelete = ForeignKey.CASCADE
-    )],
-    indices = [Index(value = ["novelId"]), Index(value = ["novelId", "orderIndex"])]
-)
-data class ChapterEntity(
-    @PrimaryKey val id: String,
-    val novelId: String,
-    val orderIndex: Int,
-    val title: String,
-    val content: String,
-    val wordCount: Int,
-    val scrollPosition: Int = 0,
-    val read: Boolean = false,
-    val readAt: Long? = null,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
-)
-```
+#### Step 5: Text Replacement Caching (`ReplacementEngine.kt`)
+- Implement an in-memory cache for parsed rules and compiled regex `Pattern` instances.
+- Cache processed chapter content keyed by `(chapterId, rulesVersion)`.
+- Evict/invalidate cache on novel rule updates or replacement toggle.
 
-### Text-to-Speech (TTS) Engine Flow
-1. **Preparation**: When user taps Play, retrieve current chapter content with active novel replacement rules applied.
-2. **Chunking Algorithm**:
-   - Split by double-newlines (paragraphs).
-   - If a paragraph exceeds 1,500 characters, split into sentences (`[.!?。！？]`).
-   - If a sentence exceeds 1,500 characters, split by whitespace words.
-3. **Queue Execution**:
-   - Request audio focus via `AudioManager.requestAudioFocus`.
-   - Dispatch first chunk with `QUEUE_FLUSH`, subsequent chunks with `QUEUE_ADD`.
-   - Update `currentChunkIndex` and high-level playback state (`IDLE`, `PLAYING`, `PAUSED`).
-4. **Auto-Advance**: When the final chunk triggers `onDone`, if "Continue Reading" is enabled, transition to `orderIndex + 1`, update Reader screen, and commence reading the next chapter automatically.
-
-### File Import & Backup Strategy
-- **File Import**: Storage Access Framework (`ActivityResultContracts.OpenDocument` / `GetContent`) for `.txt` files with UTF-8 decoding and interactive split previews (Auto Regex, Custom Marker, Single Chapter).
-- **JSON Backup/Restore**: Matches MTL Vault's data model (`novels`, `chapters`, `settings`, `replacements`) using Moshi/Kotlinx serialization.
-- **Export & Share**: Android `Intent.ACTION_SEND` with plain text or cache file provider to directly pipe chapters into TTS readers like @Voice or external apps.
+#### Step 6: Production Build Config & Proguard (`app/build.gradle.kts`)
+- Enable R8 shrinking and minification (`isMinifyEnabled = true`, `isShrinkResources = true`).
+- Add keep rules for Room entities, DAOs, Kotlin serialization, and TTS service components.
+- Make release signing gracefully fall back to debug signing when environment variables are unset.
+- Safely clean up unused Google Services/Firebase plugins.
 
 ---
 
-## 5. Verification Plan
-
-1. **Build & Compilation**: Run `compile_applet` to verify Android Gradle build, KSP code generation for Room entities and DAOs, and Compose Material 3 dependencies.
-2. **CRUD & Offline DB**: Verify novel creation, chapter ordering, bulk import, chapter editing, and cascading deletions.
-3. **Chapter Splitter**: Validate regex patterns against varied formats (`Chapter 1`, `Chapter 1: The Beginning`, `CHAPTER IV`, `باب 1`, `अध्याय 1`).
-4. **TTS Lifecycle & Chunking**: Verify TTS initialization, chunk progression, pause/resume, pitch/speed controls, audio focus handling, and automatic progression across chapter boundaries.
-5. **UI Polish & Themes**: Verify Light, Sepia, Dark, and OLED Night modes, fluid scrolling on large texts, typography size adjustments, and back press navigation.
+### Step 1 Verification Checklist (For Emulator Testing)
+1. **Smooth Scrolling**: Open any chapter with 100+ paragraphs and fling-scroll up and down. Confirm zero frame drops or stutter.
+2. **Reading Controls Toggle**: Single-tap anywhere on the text or between paragraphs to toggle the top bar and bottom reader controls on/off.
+3. **TTS Double-Tap**: Double-tap any paragraph to verify TTS starts playing from that exact paragraph with the highlight box and speaker icon visible.
+4. **TTS Auto-Scroll**: Let TTS advance to a paragraph off-screen; verify the reader smoothly scrolls to bring the active paragraph into view.
+5. **Theme & Font Consistency**: Switch between Light, Dark, Sepia, and Night themes, and toggle Serif/Sans fonts; verify paragraph styling adapts instantly.

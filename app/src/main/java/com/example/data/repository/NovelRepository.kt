@@ -91,6 +91,23 @@ class NovelRepository(
         id
     }
 
+    suspend fun createSampleNovel(): String = withContext(Dispatchers.IO) {
+        val novelId = createNovel(
+            title = com.example.data.sample.SampleDataGenerator.getSampleNovelTitle(),
+            author = com.example.data.sample.SampleDataGenerator.getSampleNovelAuthor(),
+            description = com.example.data.sample.SampleDataGenerator.getSampleNovelDescription()
+        )
+        val chapters = com.example.data.sample.SampleDataGenerator.generateSampleChapters()
+        importChapters(novelId, chapters)
+        novelId
+    }
+
+    suspend fun ensureSampleDataIfEmpty() = withContext(Dispatchers.IO) {
+        if (novelDao.getNovelCountSync() == 0) {
+            createSampleNovel()
+        }
+    }
+
     suspend fun updateNovel(novel: NovelEntity) = withContext(Dispatchers.IO) {
         novelDao.updateNovel(novel.copy(updatedAt = System.currentTimeMillis()))
     }
@@ -145,6 +162,10 @@ class NovelRepository(
 
     suspend fun updateScrollPosition(chapterId: String, position: Int) = withContext(Dispatchers.IO) {
         chapterDao.updateScrollPosition(chapterId, position)
+    }
+
+    suspend fun updateReadingPosition(chapterId: String, paragraphIndex: Int, scrollY: Int = 0) = withContext(Dispatchers.IO) {
+        chapterDao.updateReadingPosition(chapterId, paragraphIndex, scrollY)
     }
 
     suspend fun updateLastChapter(novelId: String, chapterId: String) = withContext(Dispatchers.IO) {
