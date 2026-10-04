@@ -34,15 +34,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatSize
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -333,24 +330,6 @@ fun ReaderScreen(
                         )
                     }
 
-                    FilledIconButton(
-                        onClick = { viewModel.shareToVoice(context) },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .testTag("reader_quick_voice_button"),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Play in @Voice",
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
                     IconButton(
                         onClick = { showSettingsSheet = true },
                         modifier = Modifier.testTag("reader_typography_settings_button")
@@ -409,7 +388,6 @@ fun ReaderScreen(
         ReaderSettingsBottomSheet(
             settings = settings,
             onUpdateSettings = { viewModel.updateSettings(it) },
-            onShareVoiceClick = { viewModel.shareToVoice(context) },
             onDismiss = { showSettingsSheet = false }
         )
     }

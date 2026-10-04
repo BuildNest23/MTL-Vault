@@ -13,13 +13,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,7 +32,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,7 +46,6 @@ import com.example.ui.theme.ReaderSepiaBg
 fun ReaderSettingsBottomSheet(
     settings: ReaderSettings,
     onUpdateSettings: (ReaderSettings) -> Unit,
-    onShareVoiceClick: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -208,28 +203,6 @@ fun ReaderSettingsBottomSheet(
                 valueRange = 1.2f..2.4f,
                 steps = 11
             )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Share / Play in external app or @Voice button
-            Button(
-                onClick = {
-                    onDismiss()
-                    onShareVoiceClick()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("reader_share_voice"),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Share,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Share / Send to @Voice")
-            }
         }
     }
 }
