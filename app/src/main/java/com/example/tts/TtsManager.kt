@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -113,7 +114,22 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             isInitialized = true
             val engine = tts
             if (engine != null) {
-                engine.language = Locale.getDefault()
+                // Apply AudioAttributes for media playback
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    val audioAttributes = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                    engine.setAudioAttributes(audioAttributes)
+                }
+
+                // Default to US English or default system locale with fallback
+                val defaultLocale = Locale.getDefault()
+                val langResult = engine.setLanguage(defaultLocale)
+                if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    engine.setLanguage(Locale.US)
+                }
+
                 engine.setSpeechRate(speechRate)
                 engine.setPitch(speechPitch)
 
@@ -147,7 +163,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             isInitialized = false
             _playbackInfo.value = TtsPlaybackInfo(
                 state = TtsState.ERROR,
-                errorMessage = "TTS initialization failed (code $status). Make sure Google Speech Services is enabled."
+                errorMessage = "TTS initialization failed (code $status)."
             )
         }
     }
@@ -160,7 +176,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 mainScope.launch {
                     _playbackInfo.value = _playbackInfo.value.copy(
                         state = TtsState.PLAYING,
-                        currentChunkIndex = index
+                        currentChunkIndex = index,
+                        errorMessage = null
                     )
                 }
             }
@@ -170,6 +187,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 if (!isSpeakingActive) return
 
                 mainScope.launch {
+                    // Small yield to let audio sink settle
+                    delay(30)
                     val nextIndex = finishedIndex + 1
                     if (nextIndex < chunks.size) {
                         currentChunkIndex = nextIndex
@@ -183,7 +202,6 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                         _playbackInfo.value = _playbackInfo.value.copy(
                             currentChunkIndex = chunks.size
                         )
-                        // Trigger next chapter transition without tearing down service
                         if (onChapterCompleteCallback != null) {
                             onChapterCompleteCallback?.invoke()
                         } else {
@@ -195,7 +213,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
-                handleUtteranceError("Speech error on $utteranceId")
+                handleUtteranceError("Synthesis error on $utteranceId")
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
@@ -218,23 +236,25 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     }
 
     private fun handleUtteranceError(message: String) {
-        Log.w(tag, "Utterance error: $message")
+        Log.w(tag, "Utterance error encountered: $message on chunk $currentChunkIndex")
         if (!isSpeakingActive) return
 
         mainScope.launch {
-            // Attempt to advance past problematic chunk
+            // Automatically advance past problematic/unpronounceable chunk instead of freezing
             val nextIndex = currentChunkIndex + 1
             if (nextIndex < chunks.size) {
                 currentChunkIndex = nextIndex
+                _playbackInfo.value = _playbackInfo.value.copy(
+                    currentChunkIndex = nextIndex,
+                    errorMessage = null
+                )
+                delay(80)
                 speakCurrentChunk()
             } else {
                 if (onChapterCompleteCallback != null) {
                     onChapterCompleteCallback?.invoke()
                 } else {
-                    _playbackInfo.value = _playbackInfo.value.copy(
-                        state = TtsState.IDLE,
-                        errorMessage = message
-                    )
+                    skipToNextChapter()
                 }
             }
         }
@@ -276,6 +296,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 return@ensureReady
             }
 
+            configureLanguageForText(content.take(600))
+
             isSpeakingActive = true
             _playbackInfo.value = TtsPlaybackInfo(
                 state = TtsState.PLAYING,
@@ -283,11 +305,42 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 chapterId = chapterId,
                 chapterTitle = chapterTitle,
                 totalChunks = chunks.size,
-                currentChunkIndex = currentChunkIndex
+                currentChunkIndex = currentChunkIndex,
+                errorMessage = null
             )
 
             TtsPlaybackService.start(context)
             speakCurrentChunk()
+        }
+    }
+
+    private fun configureLanguageForText(sample: String) {
+        val engine = tts ?: return
+        val detected = detectLocaleForText(sample)
+        var result = engine.setLanguage(detected)
+        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+            result = engine.setLanguage(Locale.US)
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                engine.setLanguage(Locale.getDefault())
+            }
+        }
+    }
+
+    private fun detectLocaleForText(sample: String): Locale {
+        var urduArabicCount = 0
+        var latinCount = 0
+        for (ch in sample) {
+            val code = ch.code
+            if ((code in 0x0600..0x06FF) || (code in 0x0750..0x077F) || (code in 0xFB50..0xFDFF) || (code in 0xFE70..0xFEFF)) {
+                urduArabicCount++
+            } else if ((code in 0x0041..0x005A) || (code in 0x0061..0x007A)) {
+                latinCount++
+            }
+        }
+        return if (urduArabicCount > latinCount && urduArabicCount > 10) {
+            Locale("ur")
+        } else {
+            Locale.US
         }
     }
 
@@ -304,15 +357,15 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
         val index = currentChunkIndex
         if (index < 0 || index >= chunks.size) {
-            // Reached the end
             if (onChapterCompleteCallback != null) {
                 onChapterCompleteCallback?.invoke()
             }
             return
         }
 
-        val chunk = chunks[index]
-        if (chunk.isBlank()) {
+        val rawChunk = chunks[index]
+        val chunk = sanitizeSpeechText(rawChunk)
+        if (chunk.isBlank() || !chunk.any { it.isLetterOrDigit() }) {
             currentChunkIndex = index + 1
             speakCurrentChunk()
             return
@@ -333,7 +386,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
         val result = engine.speak(chunk, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
         if (result != TextToSpeech.SUCCESS) {
-            Log.w(tag, "engine.speak returned $result on chunk $index. Reinitializing...")
+            Log.w(tag, "engine.speak returned $result on chunk $index. Recovering engine...")
             initEngine {
                 val retryEngine = tts
                 retryEngine?.speak(chunk, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
@@ -357,7 +410,10 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         ensureReady {
             if (requestAudioFocus()) {
                 isSpeakingActive = true
-                _playbackInfo.value = _playbackInfo.value.copy(state = TtsState.PLAYING)
+                _playbackInfo.value = _playbackInfo.value.copy(
+                    state = TtsState.PLAYING,
+                    errorMessage = null
+                )
                 TtsPlaybackService.start(context)
                 speakCurrentChunk()
             }
@@ -374,7 +430,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         abandonAudioFocus()
         _playbackInfo.value = _playbackInfo.value.copy(
             state = TtsState.IDLE,
-            currentChunkIndex = 0
+            currentChunkIndex = 0,
+            errorMessage = null
         )
         if (triggerServiceStop) {
             TtsPlaybackService.stop(context)
@@ -491,31 +548,65 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         return tts?.voices?.toList() ?: emptyList()
     }
 
+    fun sanitizeSpeechText(raw: String): String {
+        var s = raw
+        // Strip residual HTML/XML tags
+        s = s.replace(Regex("<[^>]+>"), " ")
+        // Unescape entities
+        s = s.replace("&nbsp;", " ")
+            .replace("&amp;", " and ")
+            .replace("&lt;", " ")
+            .replace("&gt;", " ")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&#39;", "'")
+            .replace("&mdash;", " — ")
+            .replace("&ndash;", " – ")
+            .replace("&hellip;", " ... ")
+        // Remove unprintable control characters and zero-width spaces
+        s = s.filter { ch ->
+            val c = ch.code
+            c == 0xA || c == 0xD || c == 0x9 ||
+                    (c in 0x20..0xD7FF) ||
+                    (c in 0xE000..0xFFFD)
+        }
+        // Remove runs of decorative symbols that make TTS engines fail with ERROR_SYNTHESIS
+        s = s.replace(Regex("[-*=_~]{2,}"), " ")
+        return s.trim()
+    }
+
     private fun chunkText(text: String): List<String> {
         val rawParagraphs = text.split(Regex("(\r?\n){2,}"))
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+            .map { sanitizeSpeechText(it) }
+            .filter { it.isNotBlank() && it.any { ch -> ch.isLetterOrDigit() } }
 
         val result = mutableListOf<String>()
-        val maxLen = 800 // comfortable length per speech chunk
+        val maxLen = 600
 
         for (para in rawParagraphs) {
             if (para.length <= maxLen) {
                 result.add(para)
             } else {
-                // Split large paragraph into sentences or sub-chunks
                 val sentences = para.split(Regex("(?<=[.!?؛۔])\\s+"))
                 var currentSubChunk = StringBuilder()
                 for (sentence in sentences) {
-                    if (currentSubChunk.length + sentence.length > maxLen && currentSubChunk.isNotEmpty()) {
-                        result.add(currentSubChunk.toString().trim())
+                    val cleanSentence = sentence.trim()
+                    if (cleanSentence.isBlank()) continue
+                    if (currentSubChunk.length + cleanSentence.length > maxLen && currentSubChunk.isNotEmpty()) {
+                        val subText = currentSubChunk.toString().trim()
+                        if (subText.any { it.isLetterOrDigit() }) {
+                            result.add(subText)
+                        }
                         currentSubChunk = StringBuilder()
                     }
                     if (currentSubChunk.isNotEmpty()) currentSubChunk.append(" ")
-                    currentSubChunk.append(sentence)
+                    currentSubChunk.append(cleanSentence)
                 }
                 if (currentSubChunk.isNotEmpty()) {
-                    result.add(currentSubChunk.toString().trim())
+                    val subText = currentSubChunk.toString().trim()
+                    if (subText.any { it.isLetterOrDigit() }) {
+                        result.add(subText)
+                    }
                 }
             }
         }

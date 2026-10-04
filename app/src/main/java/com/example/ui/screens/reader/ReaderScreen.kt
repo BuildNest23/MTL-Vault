@@ -186,10 +186,11 @@ fun ReaderScreen(
                     renderedContent.split(Regex("(\r?\n){2,}")).map { it.trim() }.filter { it.isNotBlank() }
                 }
 
+                val isTtsActive = (ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED) &&
+                        ttsInfo.chapterId == chapter?.id
+
                 paragraphs.forEachIndexed { paraIndex, paragraph ->
-                    val isReadingThis = (ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED) &&
-                            ttsInfo.currentChunkIndex == paraIndex &&
-                            ttsInfo.chapterId == chapter?.id
+                    val isReadingThis = isTtsActive && ttsInfo.currentChunkIndex == paraIndex
 
                     val highlightBg = when (settings.theme) {
                         "sepia" -> Color(0xFFECD7B2)
@@ -210,11 +211,18 @@ fun ReaderScreen(
                             )
                             .clickable { viewModel.playFromParagraph(paraIndex) }
                             .padding(horizontal = 12.dp, vertical = 8.dp)
-                    } else {
+                    } else if (isTtsActive) {
                         Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .clickable { viewModel.playFromParagraph(paraIndex) }
+                            .padding(horizontal = 4.dp, vertical = 4.dp)
+                    } else {
+                        // In pure reading mode: tapping toggles reading controls, doesn't start TTS until Play button is pressed!
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { controlsVisible = !controlsVisible }
                             .padding(horizontal = 4.dp, vertical = 4.dp)
                     }
 
