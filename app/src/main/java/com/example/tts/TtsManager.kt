@@ -77,17 +77,17 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
-            AudioManager.AUDIOFOCUS_LOSS -> {
-                pause()
-            }
+            AudioManager.AUDIOFOCUS_LOSS,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                // Focus was interrupted by a phone call, WhatsApp voice message, video, or another app.
+                // Stop speech immediately and abandon focus.
+                // Never auto-resume; wait until the user explicitly presses Play.
                 pause()
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
-                if (_playbackInfo.value.state == TtsState.PAUSED) {
-                    resume()
-                }
+                // Strictly do NOT auto-resume playback when another app (like WhatsApp) finishes.
+                // Playback must only resume when the user explicitly presses Play or double-taps a paragraph.
             }
         }
     }
@@ -420,6 +420,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         } catch (e: Exception) {
             Log.w(tag, "Error during tts.stop on pause: ${e.localizedMessage}")
         }
+        abandonAudioFocus()
         _playbackInfo.value = _playbackInfo.value.copy(state = TtsState.PAUSED)
     }
 
