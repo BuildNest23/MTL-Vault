@@ -83,11 +83,11 @@ class TtsPlaybackService : Service() {
                 }
 
                 override fun onSkipToNext() {
-                    ttsManager?.nextChunk()
+                    ttsManager?.skipToNextChapter()
                 }
 
                 override fun onSkipToPrevious() {
-                    ttsManager?.previousChunk()
+                    ttsManager?.skipToPreviousChapter()
                 }
 
                 override fun onStop() {
@@ -124,6 +124,8 @@ class TtsPlaybackService : Service() {
                     ttsManager.pause()
                 } else if (state == TtsState.PAUSED) {
                     ttsManager.resume()
+                } else {
+                    ttsManager?.resume()
                 }
             }
             ACTION_PLAY -> {
@@ -133,10 +135,10 @@ class TtsPlaybackService : Service() {
                 ttsManager?.pause()
             }
             ACTION_PREV -> {
-                ttsManager?.previousChunk()
+                ttsManager?.skipToPreviousChapter()
             }
             ACTION_NEXT -> {
-                ttsManager?.nextChunk()
+                ttsManager?.skipToNextChapter()
             }
             ACTION_STOP -> {
                 ttsManager?.stop()

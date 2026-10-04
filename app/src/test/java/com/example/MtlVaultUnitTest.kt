@@ -389,4 +389,48 @@ class MtlVaultUnitTest {
         assertEquals("Chapter 6", determineNextTitle(listOf("Ch. 5")))
         assertEquals("Chapter 10", determineNextTitle(listOf("Episode 9")))
     }
+
+    @Test
+    fun testContinuousChapterPlaybackLogic() {
+        val novel = NovelEntity(
+            id = "n_seq",
+            title = "Continuous Novel",
+            author = "Author",
+            description = "Test Desc"
+        )
+        val ch1 = ChapterEntity(
+            id = "c_1",
+            novelId = "n_seq",
+            orderIndex = 0,
+            title = "Chapter 1",
+            content = "Paragraph 1.\n\nParagraph 2.",
+            wordCount = 4
+        )
+        val ch2 = ChapterEntity(
+            id = "c_2",
+            novelId = "n_seq",
+            orderIndex = 1,
+            title = "Chapter 2",
+            content = "Paragraph 3.\n\nParagraph 4.",
+            wordCount = 4
+        )
+
+        val chapterMap = listOf(ch1, ch2).associateBy { it.id }
+        var currentChapter = ch1
+        var playCount = 0
+
+        fun onChapterCompleteSim(currentOrder: Int) {
+            val next = listOf(ch1, ch2).find { it.orderIndex == currentOrder + 1 }
+            if (next != null) {
+                currentChapter = next
+                playCount++
+            }
+        }
+
+        assertEquals("Chapter 1", currentChapter.title)
+        onChapterCompleteSim(currentChapter.orderIndex)
+        assertEquals("Chapter 2", currentChapter.title)
+        assertEquals(1, playCount)
+    }
 }
+

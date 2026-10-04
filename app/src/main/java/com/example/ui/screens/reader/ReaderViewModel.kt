@@ -61,6 +61,8 @@ class ReaderViewModel(
 
     init {
         loadChapter(initialChapterId)
+        ttsManager.onNextChapterRequested = { nextChapter(autoPlay = true) }
+        ttsManager.onPrevChapterRequested = { prevChapter(autoPlay = true) }
     }
 
     fun loadChapter(chapterId: String) {
@@ -86,14 +88,21 @@ class ReaderViewModel(
         }
     }
 
-    fun prevChapter() {
+    fun prevChapter(autoPlay: Boolean = false) {
         val chapter = _currentChapter.value ?: return
         viewModelScope.launch {
             val prev = repository.getPrevChapter(novelId, chapter.orderIndex)
             if (prev != null) {
-                loadChapter(prev.id)
-                if (ttsManager.isPlayingChapter(novelId, chapter.id)) {
-                    playCurrentChapterTts()
+                val shouldPlay = autoPlay || ttsManager.isPlaying()
+                _currentChapterId.value = prev.id
+                val loadedChapter = repository.getChapterByIdSync(prev.id) ?: return@launch
+                _currentChapter.value = loadedChapter
+                val rendered = repository.getRenderedChapterContent(novelId, loadedChapter)
+                _renderedContent.value = rendered
+                repository.updateLastChapter(novelId, loadedChapter.id)
+
+                if (shouldPlay) {
+                    startTtsForChapter(loadedChapter, rendered, 0)
                 }
             } else {
                 _events.emit(ReaderEvent.ShowToast("First chapter reached."))
@@ -101,16 +110,24 @@ class ReaderViewModel(
         }
     }
 
-    fun nextChapter() {
+    fun nextChapter(autoPlay: Boolean = false) {
         val chapter = _currentChapter.value ?: return
         viewModelScope.launch {
             val next = repository.getNextChapter(novelId, chapter.orderIndex)
             if (next != null) {
-                loadChapter(next.id)
-                if (ttsManager.isPlayingChapter(novelId, chapter.id)) {
-                    playCurrentChapterTts()
+                val shouldPlay = autoPlay || ttsManager.isPlaying()
+                _currentChapterId.value = next.id
+                val loadedChapter = repository.getChapterByIdSync(next.id) ?: return@launch
+                _currentChapter.value = loadedChapter
+                val rendered = repository.getRenderedChapterContent(novelId, loadedChapter)
+                _renderedContent.value = rendered
+                repository.updateLastChapter(novelId, loadedChapter.id)
+
+                if (shouldPlay) {
+                    startTtsForChapter(loadedChapter, rendered, 0)
                 }
             } else {
+                ttsManager.stop()
                 _events.emit(ReaderEvent.ShowToast("Last chapter reached."))
             }
         }
@@ -120,12 +137,21 @@ class ReaderViewModel(
         val info = ttsManager.playbackInfo.value
         val chapter = _currentChapter.value ?: return
 
-        if (ttsManager.isPlayingChapter(novelId, chapter.id)) {
-            ttsManager.pause()
-        } else if (info.novelId == novelId && info.chapterId == chapter.id && info.state == com.example.tts.TtsState.PAUSED) {
-            ttsManager.resume()
-        } else {
-            playCurrentChapterTts()
+        when (info.state) {
+            com.example.tts.TtsState.PLAYING -> {
+                ttsManager.pause()
+            }
+            com.example.tts.TtsState.PAUSED -> {
+                if (info.chapterId == chapter.id) {
+                    ttsManager.resume()
+                } else {
+                    playCurrentChapterTts()
+                }
+            }
+            else -> {
+                val startIndex = if (info.chapterId == chapter.id) info.currentChunkIndex else 0
+                playCurrentChapterTts(startFromChunkIndex = startIndex)
+            }
         }
     }
 
@@ -152,8 +178,17 @@ class ReaderViewModel(
 
     private fun playCurrentChapterTts(startFromChunkIndex: Int = 0) {
         val chapter = _currentChapter.value ?: return
-        val content = _renderedContent.value
+        viewModelScope.launch {
+            var content = _renderedContent.value
+            if (content.isBlank()) {
+                content = repository.getRenderedChapterContent(novelId, chapter)
+                _renderedContent.value = content
+            }
+            startTtsForChapter(chapter, content, startFromChunkIndex)
+        }
+    }
 
+    private fun startTtsForChapter(chapter: ChapterEntity, content: String, startFromChunkIndex: Int) {
         ttsManager.playChapter(
             novelId = novelId,
             chapterId = chapter.id,
@@ -164,11 +199,9 @@ class ReaderViewModel(
                 viewModelScope.launch {
                     val currentSettings = settingsDataStore.settingsFlow.first()
                     if (currentSettings.continueReading) {
-                        val next = repository.getNextChapter(novelId, chapter.orderIndex)
-                        if (next != null) {
-                            loadChapter(next.id)
-                            playCurrentChapterTts()
-                        }
+                        nextChapter(autoPlay = true)
+                    } else {
+                        ttsManager.stop()
                     }
                 }
             }
@@ -213,6 +246,7 @@ class ReaderViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        // Save final position
+        ttsManager.onNextChapterRequested = null
+        ttsManager.onPrevChapterRequested = null
     }
 }
