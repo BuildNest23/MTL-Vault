@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
@@ -27,6 +28,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -38,9 +40,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.launch
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -66,6 +70,12 @@ fun ReplacementsScreen(
     val previewResult by viewModel.previewResult.collectAsStateWithLifecycle()
 
     var showClearConfirm by remember { mutableStateOf(false) }
+    var findText by remember { mutableStateOf("") }
+    var replaceText by remember { mutableStateOf("") }
+    var flagCs by remember { mutableStateOf(false) }
+    var flagNww by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope()
 
     BackHandler {
         onBackClick()
@@ -111,7 +121,7 @@ fun ReplacementsScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .imePadding()
         ) {
             Spacer(modifier = Modifier.height(8.dp))
@@ -149,6 +159,123 @@ fun ReplacementsScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Rule Builder Card: Two boxes side-by-side with arrow, flags, and save button
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Add Replacement",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Two boxes side by side with arrow going from left to right
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = findText,
+                            onValueChange = { findText = it },
+                            label = { Text("Original") },
+                            placeholder = { Text("Word to find") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("replacement_input_find"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Box(
+                            modifier = Modifier.padding(horizontal = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Changes to",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        OutlinedTextField(
+                            value = replaceText,
+                            onValueChange = { replaceText = it },
+                            label = { Text("Replacement") },
+                            placeholder = { Text("Change to") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("replacement_input_replace"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Flags row on left, Save button on right
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FilterChip(
+                                selected = flagCs,
+                                onClick = { flagCs = !flagCs },
+                                label = { Text("[cs] Case", fontSize = 12.sp) },
+                                shape = RoundedCornerShape(8.dp)
+                            )
+
+                            FilterChip(
+                                selected = flagNww,
+                                onClick = { flagNww = !flagNww },
+                                label = { Text("[nww] Inside", fontSize = 12.sp) },
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                if (findText.isNotBlank()) {
+                                    viewModel.addRule(
+                                        find = findText,
+                                        replace = replaceText,
+                                        caseSensitive = flagCs,
+                                        partialMatch = flagNww
+                                    )
+                                    findText = ""
+                                    replaceText = ""
+                                    flagCs = false
+                                    flagNww = false
+                                    coroutineScope.launch {
+                                        scrollState.animateScrollTo(scrollState.maxValue)
+                                    }
+                                }
+                            },
+                            enabled = findText.isNotBlank(),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("replacement_add_rule_button")
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Save", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
             // Rules Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -169,11 +296,13 @@ fun ReplacementsScreen(
                         )
 
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            OutlinedButton(
-                                onClick = { viewModel.loadExampleRules() },
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Example", fontSize = 12.sp)
+                            if (rulesText.isBlank()) {
+                                OutlinedButton(
+                                    onClick = { viewModel.loadExampleRules() },
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Example", fontSize = 12.sp)
+                                }
                             }
 
                             OutlinedButton(

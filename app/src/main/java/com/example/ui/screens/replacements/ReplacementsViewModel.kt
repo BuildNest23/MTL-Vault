@@ -61,6 +61,31 @@ class ReplacementsViewModel(
         _enabled.value = newEnabled
     }
 
+    fun addRule(find: String, replace: String, caseSensitive: Boolean, partialMatch: Boolean) {
+        val trimmedFind = find.trim()
+        if (trimmedFind.isEmpty()) return
+        val trimmedReplace = replace.trim()
+
+        val flags = buildString {
+            if (caseSensitive) append("[cs] ")
+            if (partialMatch) append("[nww] ")
+        }
+        val newRuleLine = "$flags$trimmedFind = $trimmedReplace"
+
+        val updated = if (_rulesText.value.isBlank()) {
+            newRuleLine
+        } else {
+            "${_rulesText.value.trimEnd()}\n$newRuleLine"
+        }
+        _rulesText.value = updated
+        updatePreview()
+
+        viewModelScope.launch {
+            repository.updateReplacements(novelId, _rulesText.value, _enabled.value)
+            _events.emit(ReplacementsEvent.ShowToast("Added: $trimmedFind ➔ $trimmedReplace"))
+        }
+    }
+
     fun onSampleTextChange(sample: String) {
         _sampleText.value = sample
         updatePreview()

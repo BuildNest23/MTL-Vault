@@ -24,8 +24,8 @@ object ReplacementEngine {
             var ww = true
             var rest = line
 
-            // Check for flags like [cs], [nww], [cs,nww], [ww]
-            if (rest.startsWith("[")) {
+            // Check for flags like [cs], [nww], [cs] [nww], [cs,nww], [ww]
+            while (rest.startsWith("[")) {
                 val closeIdx = rest.indexOf(']')
                 if (closeIdx > 0) {
                     val flagStr = rest.substring(1, closeIdx).lowercase()
@@ -38,6 +38,8 @@ object ReplacementEngine {
                         }
                     }
                     rest = rest.substring(closeIdx + 1).trim()
+                } else {
+                    break
                 }
             }
 
