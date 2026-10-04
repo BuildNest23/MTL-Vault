@@ -25,6 +25,22 @@ import java.util.Locale
 
 class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
+    companion object {
+        const val CHANNEL_ID = "tts_media_channel"
+        const val NOTIFICATION_ID = 1001
+        const val CHUNK_UNIT_MS = 10_000L
+
+        /**
+         * Single source of truth for splitting text into paragraphs across ReaderScreen and TtsManager.
+         * Ensures a strict 1-to-1 match between UI paragraphs and TTS chunks so highlights are never misaligned.
+         */
+        fun parseParagraphs(content: String): List<String> {
+            return content.split(Regex("(\r?\n){2,}"))
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+        }
+    }
+
     private val tag = "TtsManager"
 
     private var tts: TextToSpeech? = null
@@ -240,7 +256,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         if (!isSpeakingActive) return
 
         mainScope.launch {
-            // Automatically advance past problematic/unpronounceable chunk instead of freezing
+            // Automatically advance past problematic chunk instead of freezing
             val nextIndex = currentChunkIndex + 1
             if (nextIndex < chunks.size) {
                 currentChunkIndex = nextIndex
@@ -273,7 +289,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         currentChapterTitle = chapterTitle
         onChapterCompleteCallback = onChapterComplete
 
-        chunks = chunkText(content)
+        // Strict 1-to-1 match with UI paragraphs
+        chunks = parseParagraphs(content)
         currentChunkIndex = startFromChunkIndex.coerceIn(0, (chunks.size - 1).coerceAtLeast(0))
 
         if (chunks.isEmpty()) {
@@ -364,11 +381,13 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
 
         val rawChunk = chunks[index]
-        val chunk = sanitizeSpeechText(rawChunk)
-        if (chunk.isBlank() || !chunk.any { it.isLetterOrDigit() }) {
-            currentChunkIndex = index + 1
-            speakCurrentChunk()
-            return
+        val sanitized = sanitizeSpeechText(rawChunk)
+        // If a paragraph contains only symbols (e.g. "***" or "---"), speak a brief silent period
+        // so that onStart highlights this exact paragraph, and onDone proceeds to the next without index drift.
+        val chunk = if (sanitized.any { it.isLetterOrDigit() }) {
+            sanitized
+        } else {
+            "."
         }
 
         val engine = tts
@@ -573,44 +592,6 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         // Remove runs of decorative symbols that make TTS engines fail with ERROR_SYNTHESIS
         s = s.replace(Regex("[-*=_~]{2,}"), " ")
         return s.trim()
-    }
-
-    private fun chunkText(text: String): List<String> {
-        val rawParagraphs = text.split(Regex("(\r?\n){2,}"))
-            .map { sanitizeSpeechText(it) }
-            .filter { it.isNotBlank() && it.any { ch -> ch.isLetterOrDigit() } }
-
-        val result = mutableListOf<String>()
-        val maxLen = 600
-
-        for (para in rawParagraphs) {
-            if (para.length <= maxLen) {
-                result.add(para)
-            } else {
-                val sentences = para.split(Regex("(?<=[.!?؛۔])\\s+"))
-                var currentSubChunk = StringBuilder()
-                for (sentence in sentences) {
-                    val cleanSentence = sentence.trim()
-                    if (cleanSentence.isBlank()) continue
-                    if (currentSubChunk.length + cleanSentence.length > maxLen && currentSubChunk.isNotEmpty()) {
-                        val subText = currentSubChunk.toString().trim()
-                        if (subText.any { it.isLetterOrDigit() }) {
-                            result.add(subText)
-                        }
-                        currentSubChunk = StringBuilder()
-                    }
-                    if (currentSubChunk.isNotEmpty()) currentSubChunk.append(" ")
-                    currentSubChunk.append(cleanSentence)
-                }
-                if (currentSubChunk.isNotEmpty()) {
-                    val subText = currentSubChunk.toString().trim()
-                    if (subText.any { it.isLetterOrDigit() }) {
-                        result.add(subText)
-                    }
-                }
-            }
-        }
-        return result
     }
 
     private fun requestAudioFocus(): Boolean {

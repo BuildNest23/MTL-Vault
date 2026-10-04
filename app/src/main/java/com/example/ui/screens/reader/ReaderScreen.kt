@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.tts.TtsManager
 import com.example.ui.components.ReaderSettingsBottomSheet
 import com.example.ui.components.TtsPlayerBar
 import com.example.ui.theme.ReaderDarkBg
@@ -185,7 +186,7 @@ fun ReaderScreen(
                 Spacer(modifier = Modifier.height(28.dp))
 
                 val paragraphs = remember(renderedContent) {
-                    renderedContent.split(Regex("(\r?\n){2,}")).map { it.trim() }.filter { it.isNotBlank() }
+                    TtsManager.parseParagraphs(renderedContent)
                 }
 
                 paragraphs.forEachIndexed { paraIndex, paragraph ->

@@ -432,5 +432,35 @@ class MtlVaultUnitTest {
         assertEquals("Chapter 2", currentChapter.title)
         assertEquals(1, playCount)
     }
+
+    @Test
+    fun testTtsParagraphHighlightSync() {
+        val chapterText = """
+            Chapter 2448: The Imperial Court
+            
+            ***
+            
+            Lin Feng opened his eyes slowly.
+            
+            He felt the spiritual energy circulating smoothly through his meridians.
+            
+            -------------------
+            
+            The elder arrived with a solemn expression.
+        """.trimIndent()
+
+        val parsedParagraphs = com.example.tts.TtsManager.parseParagraphs(chapterText)
+        assertEquals(6, parsedParagraphs.size)
+        assertEquals("Chapter 2448: The Imperial Court", parsedParagraphs[0])
+        assertEquals("***", parsedParagraphs[1])
+        assertEquals("Lin Feng opened his eyes slowly.", parsedParagraphs[2])
+        assertEquals("He felt the spiritual energy circulating smoothly through his meridians.", parsedParagraphs[3])
+        assertEquals("-------------------", parsedParagraphs[4])
+        assertEquals("The elder arrived with a solemn expression.", parsedParagraphs[5])
+
+        // Verify that indices never shift and index 2 strictly corresponds to Lin Feng opened his eyes
+        assertEquals(2, parsedParagraphs.indexOf("Lin Feng opened his eyes slowly."))
+    }
 }
+
 
