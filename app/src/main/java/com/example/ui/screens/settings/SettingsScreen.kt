@@ -19,9 +19,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -61,7 +65,9 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val logSize by viewModel.logSizeText.collectAsStateWithLifecycle()
     var showResetDialog by remember { mutableStateOf(false) }
+    var showClearLogDialog by remember { mutableStateOf(false) }
 
     val importBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -71,7 +77,16 @@ fun SettingsScreen(
         }
     }
 
+    val saveLogLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri != null) {
+            viewModel.saveLogToUri(context, uri)
+        }
+    }
+
     LaunchedEffect(Unit) {
+        viewModel.refreshLogSize(context)
         viewModel.events.collect { event ->
             when (event) {
                 is SettingsEvent.ShowToast -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
@@ -270,6 +285,32 @@ fun SettingsScreen(
                                 modifier = Modifier.testTag("settings_continue_reading_switch")
                             )
                         }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Open chapter list at first unread chapter",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Position chapter list directly at the first unread chapter when opening a novel.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = settings.openAtFirstUnread,
+                                onCheckedChange = { viewModel.updateOpenAtFirstUnread(it) },
+                                modifier = Modifier.testTag("settings_open_at_first_unread_switch")
+                            )
+                        }
                     }
                 }
             }
@@ -377,6 +418,123 @@ fun SettingsScreen(
                 }
             }
 
+            // Diagnostics Card
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Assessment,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Diagnostics",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Diagnostic logs capture technical events, TTS status, and error traces without recording your novel text.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "Current log size: $logSize",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Switch: Detailed logging
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(
+                                    text = "Detailed logging",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Log debug details (default off: info, warnings and errors only)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = settings.detailedLogging,
+                                onCheckedChange = { viewModel.updateDetailedLogging(it) },
+                                modifier = Modifier.testTag("settings_detailed_logging_switch")
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { viewModel.shareLog(context) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("settings_share_log_button"),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Share Log", maxLines = 1)
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    val dateStr = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                                    saveLogLauncher.launch("mtl_vault_log_$dateStr.txt")
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("settings_save_log_button"),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Save to File", maxLines = 1)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedButton(
+                            onClick = { showClearLogDialog = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("settings_clear_log_button"),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Clear Log", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+
             // Danger Zone Card
             item {
                 Card(
@@ -469,6 +627,20 @@ fun SettingsScreen(
                 viewModel.resetAllData()
             },
             onDismiss = { showResetDialog = false }
+        )
+    }
+
+    if (showClearLogDialog) {
+        ConfirmDialog(
+            title = "Clear Logs?",
+            message = "Are you sure you want to clear all current and archived diagnostic log entries?",
+            confirmText = "Clear",
+            isDestructive = true,
+            onConfirm = {
+                showClearLogDialog = false
+                viewModel.clearLogs(context)
+            },
+            onDismiss = { showClearLogDialog = false }
         )
     }
 }

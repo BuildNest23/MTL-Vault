@@ -25,6 +25,10 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 
+import kotlinx.coroutines.flow.onEach
+import com.example.data.preferences.SettingsDataStore
+import com.example.data.model.ReaderSettings
+
 sealed class DetailEvent {
     data class ShowToast(val message: String) : DetailEvent()
     object NovelDeleted : DetailEvent()
@@ -35,14 +39,23 @@ sealed class DetailEvent {
 
 class NovelDetailViewModel(
     val novelId: String,
-    private val repository: NovelRepository
+    private val repository: NovelRepository,
+    private val settingsDataStore: SettingsDataStore? = null
 ) : ViewModel() {
+
+    private val _chaptersLoaded = MutableStateFlow(false)
+    val chaptersLoaded: StateFlow<Boolean> = _chaptersLoaded.asStateFlow()
 
     val novel: StateFlow<NovelEntity?> = repository.getNovelById(novelId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val chapters: StateFlow<List<ChapterSummary>> = repository.getChapterSummaries(novelId)
+        .onEach { _chaptersLoaded.value = true }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val settings: StateFlow<ReaderSettings> = settingsDataStore?.settingsFlow
+        ?.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ReaderSettings())
+        ?: MutableStateFlow(ReaderSettings()).asStateFlow()
 
     private val _events = MutableSharedFlow<DetailEvent>()
     val events: SharedFlow<DetailEvent> = _events.asSharedFlow()

@@ -137,6 +137,7 @@ class NovelRepository(
     }
 
     suspend fun updateChapter(chapter: ChapterEntity) = withContext(Dispatchers.IO) {
+        com.example.replacement.ReplacementEngine.invalidateChapter(chapter.id)
         val wc = ChapterSplitter.countWords(chapter.content)
         chapterDao.updateChapter(chapter.copy(wordCount = wc, updatedAt = System.currentTimeMillis()))
         novelDao.updateLastChapter(chapter.novelId, chapter.id, System.currentTimeMillis())
@@ -173,38 +174,61 @@ class NovelRepository(
     }
 
     suspend fun updateReplacements(novelId: String, rules: String, enabled: Boolean) = withContext(Dispatchers.IO) {
+        com.example.replacement.ReplacementEngine.invalidateCache()
         novelDao.updateReplacements(novelId, rules, enabled, System.currentTimeMillis())
     }
 
     suspend fun importChapters(novelId: String, chapters: List<SplitChapterResult>): Int = withContext(Dispatchers.IO) {
-        val currentMaxOrder = chapterDao.getMaxOrderIndex(novelId) ?: -1
-        var nextOrder = currentMaxOrder + 1
-        val entities = chapters.map { ch ->
-            ChapterEntity(
-                id = "c_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().take(6),
-                novelId = novelId,
-                orderIndex = nextOrder++,
-                title = ch.title,
-                content = ch.content,
-                wordCount = ch.wordCount,
-                createdAt = System.currentTimeMillis(),
-                updatedAt = System.currentTimeMillis()
-            )
+        val startTime = System.currentTimeMillis()
+        com.example.logging.AppLogger.i("Import", "importChapters started: novelId=$novelId, count=${chapters.size}")
+        try {
+            val currentMaxOrder = chapterDao.getMaxOrderIndex(novelId) ?: -1
+            var nextOrder = currentMaxOrder + 1
+            val entities = chapters.map { ch ->
+                ChapterEntity(
+                    id = "c_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().take(6),
+                    novelId = novelId,
+                    orderIndex = nextOrder++,
+                    title = ch.title,
+                    content = ch.content,
+                    wordCount = ch.wordCount,
+                    createdAt = System.currentTimeMillis(),
+                    updatedAt = System.currentTimeMillis()
+                )
+            }
+            chapterDao.insertChapters(entities)
+            novelDao.updateLastChapter(novelId, entities.lastOrNull()?.id, System.currentTimeMillis())
+            val duration = System.currentTimeMillis() - startTime
+            com.example.logging.AppLogger.i("Import", "importChapters finished: inserted=${entities.size} in ${duration}ms")
+            entities.size
+        } catch (e: Exception) {
+            com.example.logging.AppLogger.e("Import", "importChapters failed for novelId=$novelId", e)
+            throw e
         }
-        chapterDao.insertChapters(entities)
-        novelDao.updateLastChapter(novelId, entities.lastOrNull()?.id, System.currentTimeMillis())
-        entities.size
     }
 
     suspend fun getRenderedChapterContent(novelId: String, chapter: ChapterEntity): String = withContext(Dispatchers.Default) {
         val novel = novelDao.getNovelByIdSync(novelId)
         val settings = settingsDataStore.settingsFlow.first()
-        if (novel != null && novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()) {
-            val rules = ReplacementEngine.parseRules(novel.replacements)
-            ReplacementEngine.applyRules(chapter.content, rules)
-        } else {
-            chapter.content
+        val rulesActive = novel != null && novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()
+        val rulesHash = if (rulesActive) novel!!.replacements.hashCode() else 0
+        val contentHash = chapter.content.hashCode()
+
+        val cached = com.example.replacement.ReplacementEngine.getCachedRenderedContent(chapter.id, rulesHash, contentHash)
+        if (cached != null) {
+            return@withContext cached
         }
+
+        val normalized = com.example.replacement.ReplacementEngine.normalizeText(chapter.content)
+        val result = if (rulesActive) {
+            val rules = com.example.replacement.ReplacementEngine.parseRules(novel!!.replacements)
+            com.example.replacement.ReplacementEngine.applyRules(normalized, rules)
+        } else {
+            normalized
+        }
+
+        com.example.replacement.ReplacementEngine.cacheRenderedContent(chapter.id, rulesHash, contentHash, result)
+        result
     }
 
     suspend fun exportChapterAsText(novelId: String, chapterId: String): String = withContext(Dispatchers.Default) {

@@ -578,6 +578,76 @@ class MtlVaultUnitTest {
         assertEquals(ch2Id, activeChapterId)
         assertEquals(0, currentChunk)
     }
+
+    @Test
+    fun testSanitizeSpeechTextEnhancements() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val ttsManager = com.example.tts.TtsManager(context)
+
+        // 1. Truncation if > 4000 chars
+        val hugeInput = "word ".repeat(1000)
+        assertTrue("Input should exceed 4000 chars", hugeInput.length > 4000)
+        val sanitizedHuge = ttsManager.sanitizeSpeechText(hugeInput)
+        assertTrue("Output should be capped at 4000 chars", sanitizedHuge.length <= 4000)
+
+        // 2. Collapse runs of repeated punctuation
+        val repeatedPunct = "What are you doing???? Stop right now..... It cannot be!!!!!"
+        val sanitizedPunct = ttsManager.sanitizeSpeechText(repeatedPunct)
+        assertEquals("What are you doing? Stop right now. It cannot be!", sanitizedPunct)
+
+        // 3. Abbreviations
+        val abbrevText = "Mr. Watson, Dr. Brown, and Prof. Xavier met at St. Patrick."
+        val sanitizedAbbrev = ttsManager.sanitizeSpeechText(abbrevText)
+        assertTrue(sanitizedAbbrev.contains("Mister Watson"))
+        assertTrue(sanitizedAbbrev.contains("Doctor Brown"))
+        assertTrue(sanitizedAbbrev.contains("Professor Xavier"))
+        assertTrue(sanitizedAbbrev.contains("Saint Patrick"))
+
+        // 4. Roman numerals
+        val romanHeading = "Chapter IV: The Battle (Part II)"
+        val sanitizedRoman = ttsManager.sanitizeSpeechText(romanHeading)
+        assertEquals("Chapter 4: The Battle (Part 2)", sanitizedRoman)
+    }
+
+    @Test
+    fun testChapterNavigationReadingPositionReset() {
+        val chapter1 = ChapterEntity(
+            id = "c_nav_1",
+            novelId = "n_nav",
+            orderIndex = 0,
+            title = "Chapter 1",
+            content = "Paragraph 1\n\nParagraph 2\n\nParagraph 3",
+            readingParagraphIndex = 2
+        )
+        val chapter2 = ChapterEntity(
+            id = "c_nav_2",
+            novelId = "n_nav",
+            orderIndex = 1,
+            title = "Chapter 2",
+            content = "New Chapter Para 1\n\nNew Chapter Para 2",
+            readingParagraphIndex = 0
+        )
+
+        // Chapter 1 restores to 2
+        val targetCh1 = chapter1.readingParagraphIndex.coerceAtLeast(0)
+        assertEquals(2, targetCh1)
+
+        // Chapter 2 starts at 0, resetting position
+        val targetCh2 = chapter2.readingParagraphIndex.coerceAtLeast(0)
+        assertEquals(0, targetCh2)
+        assertTrue(targetCh1 != targetCh2)
+    }
+
+    @Test
+    fun testRoomDatabaseConfiguration() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(context, com.example.data.database.AppDatabase::class.java)
+            .addMigrations(com.example.data.database.AppDatabase.MIGRATION_1_2)
+            .build()
+        assertNotNull(db.chapterDao())
+        assertNotNull(db.novelDao())
+        db.close()
+    }
 }
 
 

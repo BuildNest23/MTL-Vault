@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -42,6 +43,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +54,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -90,6 +93,8 @@ fun NovelDetailScreen(
     val context = LocalContext.current
     val novel by viewModel.novel.collectAsStateWithLifecycle()
     val chapters by viewModel.chapters.collectAsStateWithLifecycle()
+    val chaptersLoaded by viewModel.chaptersLoaded.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
     val isSelectionMode by viewModel.isSelectionMode.collectAsStateWithLifecycle()
     val selectedChapterIds by viewModel.selectedChapterIds.collectAsStateWithLifecycle()
     val pendingImportText by viewModel.pendingImportText.collectAsStateWithLifecycle()
@@ -98,6 +103,27 @@ fun NovelDetailScreen(
     var chapterToDeleteId by remember { mutableStateOf<String?>(null) }
     var showEditMetaDialog by remember { mutableStateOf(false) }
     var showPasteImportDialog by remember { mutableStateOf(false) }
+
+    val isDialogOrPickerActive = showDeleteNovelDialog ||
+            chapterToDeleteId != null ||
+            showEditMetaDialog ||
+            showPasteImportDialog ||
+            pendingImportText != null
+
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var shouldScrollOnResume by remember { mutableStateOf(false) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                shouldScrollOnResume = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -170,14 +196,14 @@ fun NovelDetailScreen(
             )
         }
     ) { innerPadding ->
-        if (currentNovel == null) {
+        if (currentNovel == null || !chaptersLoaded) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
                 contentAlignment = Alignment.Center
             ) {
-                Text("Loading novel...")
+                CircularProgressIndicator()
             }
             return@Scaffold
         }
@@ -188,7 +214,35 @@ fun NovelDetailScreen(
         val progressPercent = if (totalChapters > 0) (readChapters * 100) / totalChapters else 0
         val rulesCount = ReplacementEngine.parseRules(currentNovel.replacements).size
 
+        // Calculate initial scroll index before creating LazyListState so there is ZERO flicker on open
+        val initialScrollIndex = remember {
+            ChapterListScrollHelper.calculateTargetScrollIndex(
+                chapters = chapters,
+                headerItemCount = ChapterListScrollHelper.DEFAULT_HEADER_ITEM_COUNT,
+                enabled = settings.openAtFirstUnread
+            ) ?: 0
+        }
+        val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = initialScrollIndex)
+
+        // Only re-position on return to screen (ON_RESUME), never on reactive chapter flow updates
+        LaunchedEffect(shouldScrollOnResume) {
+            if (shouldScrollOnResume) {
+                if (!isSelectionMode && !isDialogOrPickerActive && chapters.isNotEmpty()) {
+                    val targetIndex = ChapterListScrollHelper.calculateTargetScrollIndex(
+                        chapters = chapters,
+                        headerItemCount = ChapterListScrollHelper.DEFAULT_HEADER_ITEM_COUNT,
+                        enabled = settings.openAtFirstUnread
+                    )
+                    if (targetIndex != null && targetIndex >= 0) {
+                        lazyListState.scrollToItem(targetIndex, 0)
+                    }
+                }
+                shouldScrollOnResume = false
+            }
+        }
+
         LazyColumn(
+            state = lazyListState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)

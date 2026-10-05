@@ -29,6 +29,14 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        if (com.example.logging.AppLogger.consumeCrashFlag(this)) {
+            android.widget.Toast.makeText(
+                this,
+                "The app closed unexpectedly last time. You can share the log in Settings > Diagnostics.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
+
         val app = application as MtlVaultApplication
         setContent {
             MtlVaultTheme {

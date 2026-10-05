@@ -11,6 +11,7 @@ import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
 import com.example.MtlVaultApplication
+import com.example.logging.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,10 +35,12 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
          * Single source of truth for splitting text into paragraphs across ReaderScreen and TtsManager.
          * Ensures a strict 1-to-1 match between UI paragraphs and TTS chunks so highlights are never misaligned.
          */
-        fun parseParagraphs(content: String): List<String> {
-            return content.split(Regex("(\r?\n){2,}"))
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
+        fun parseParagraphs(content: String, maxChars: Int = Int.MAX_VALUE): List<String> {
+            return ParagraphSplitter.parseParagraphChunks(content, maxChars).map { it.text }
+        }
+
+        fun parseParagraphChunks(content: String, maxChars: Int = Int.MAX_VALUE): List<ParagraphChunk> {
+            return ParagraphSplitter.parseParagraphChunks(content, maxChars)
         }
     }
 
@@ -78,6 +81,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        AppLogger.i("TtsManager", "audioFocusChangeListener: focusChange=$focusChange")
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
@@ -95,7 +99,9 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     }
 
     init {
-        _playbackInfo.value = TtsPlaybackInfo(state = TtsState.INITIALIZING)
+        val initialInfo = TtsPlaybackInfo(state = TtsState.INITIALIZING)
+        _playbackInfo.value = initialInfo
+        AppLogger.i("TtsManager", "init: set state to INITIALIZING")
         initEngine()
     }
 
@@ -103,6 +109,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         if (onReady != null) {
             pendingInitCallbacks.add(onReady)
         }
+        AppLogger.i("TtsManager", "initEngine called: isInitializing=$isInitializing")
         if (isInitializing) return
 
         isInitializing = true
@@ -118,16 +125,20 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             tts = TextToSpeech(context.applicationContext, this)
         } catch (e: Exception) {
             isInitializing = false
-            Log.e(tag, "Failed to create TextToSpeech instance", e)
-            _playbackInfo.value = TtsPlaybackInfo(
+            AppLogger.e("TtsManager", "Failed to create TextToSpeech instance", e)
+            val errInfo = TtsPlaybackInfo(
                 state = TtsState.ERROR,
                 errorMessage = "Failed to initialize TTS engine: ${e.localizedMessage}"
             )
+            _playbackInfo.value = errInfo
+            AppLogger.i("TtsManager", "Playback state: ERROR")
         }
     }
 
     override fun onInit(status: Int) {
         isInitializing = false
+        val defaultEng = tts?.defaultEngine ?: "unknown"
+        AppLogger.i("TtsManager", "onInit received: status=$status, defaultEngine=$defaultEng")
         if (status == TextToSpeech.SUCCESS) {
             isInitialized = true
             val engine = tts
@@ -144,8 +155,10 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 // Default to US English or default system locale with fallback
                 val defaultLocale = Locale.getDefault()
                 val langResult = engine.setLanguage(defaultLocale)
+                AppLogger.i("TtsManager", "setLanguage($defaultLocale) result=$langResult")
                 if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    engine.setLanguage(Locale.US)
+                    val fallbackResult = engine.setLanguage(Locale.US)
+                    AppLogger.i("TtsManager", "setLanguage(Locale.US) fallback result=$fallbackResult")
                 }
 
                 engine.setSpeechRate(speechRate)
@@ -154,6 +167,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 if (selectedVoiceName != null) {
                     engine.voices?.find { it.name == selectedVoiceName }?.let {
                         engine.voice = it
+                        AppLogger.i("TtsManager", "Restored voice: ${it.name}")
                     }
                 }
 
@@ -165,6 +179,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                     state = TtsState.IDLE,
                     errorMessage = null
                 )
+                AppLogger.i("TtsManager", "Playback state changed: IDLE")
             }
 
             // Execute pending callbacks
@@ -174,7 +189,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 try {
                     cb.invoke()
                 } catch (e: Exception) {
-                    Log.e(tag, "Error in pending init callback", e)
+                    AppLogger.e("TtsManager", "Error in pending init callback", e)
                 }
             }
         } else {
@@ -183,12 +198,14 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 state = TtsState.ERROR,
                 errorMessage = "TTS initialization failed (code $status)."
             )
+            AppLogger.e("TtsManager", "Playback state: ERROR (init code $status)")
         }
     }
 
     private fun setupProgressListener(engine: TextToSpeech) {
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
+                AppLogger.d("TtsManager", "onStart: utteranceId=$utteranceId")
                 // Only update active chunk index & UI highlight when speech of the paragraph actually starts!
                 // Never update highlight on silence intervals.
                 if (utteranceId != null && utteranceId.startsWith("ch_")) {
@@ -200,11 +217,13 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                             currentChunkIndex = index,
                             errorMessage = null
                         )
+                        AppLogger.d("TtsManager", "Playback state: PLAYING, chunk=$index")
                     }
                 }
             }
 
             override fun onDone(utteranceId: String?) {
+                AppLogger.d("TtsManager", "onDone: utteranceId=$utteranceId")
                 if (!isSpeakingActive) return
 
                 if (utteranceId != null && utteranceId.startsWith("ch_")) {
@@ -247,6 +266,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
+                AppLogger.e("TtsManager", "onError deprecated: utteranceId=$utteranceId")
                 handleUtteranceError("Synthesis error on $utteranceId")
             }
 
@@ -259,6 +279,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                     TextToSpeech.ERROR_NOT_INSTALLED_YET -> "Voice data downloading"
                     else -> "TTS Error code: $errorCode"
                 }
+                AppLogger.e("TtsManager", "onError: utteranceId=$utteranceId, code=$errorCode, msg=$msg")
                 handleUtteranceError(msg)
             }
         })
@@ -280,6 +301,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 _playbackInfo.value = _playbackInfo.value.copy(
                     currentChunkIndex = chunks.size
                 )
+                AppLogger.i("TtsManager", "Chapter complete: novelId=$currentNovelId, chapterId=$currentChapterId, totalChunks=${chunks.size}")
                 if (onChapterCompleteCallback != null) {
                     onChapterCompleteCallback?.invoke()
                 } else {
@@ -319,25 +341,34 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
+    @Volatile
+    private var currentMaxChars: Int = Int.MAX_VALUE
+
     fun playChapter(
         novelId: String,
         chapterId: String,
         chapterTitle: String,
         content: String,
         startFromChunkIndex: Int = 0,
+        maxChars: Int = Int.MAX_VALUE,
         onChapterComplete: (() -> Unit)? = null
     ) {
         currentNovelId = novelId
         currentChapterId = chapterId
         currentChapterTitle = chapterTitle
+        currentMaxChars = maxChars
         onChapterCompleteCallback = onChapterComplete
 
         // Strict 1-to-1 match with UI paragraphs
-        chunks = parseParagraphs(content)
+        chunks = parseParagraphs(content, maxChars)
         currentChunkIndex = startFromChunkIndex.coerceIn(0, (chunks.size - 1).coerceAtLeast(0))
         lastAdvancedChunk = currentChunkIndex - 1
 
+        val longestChunk = chunks.maxOfOrNull { it.length } ?: 0
+        AppLogger.i("TtsManager", "playChapter: novelId=$novelId, chapterId=$chapterId, title=$chapterTitle, chunks=${chunks.size}, maxChunkLen=$longestChunk, startIndex=$startFromChunkIndex, maxChars=$maxChars")
+
         if (chunks.isEmpty()) {
+            AppLogger.w("TtsManager", "playChapter: chunks empty for chapterId=$chapterId")
             _playbackInfo.value = TtsPlaybackInfo(
                 state = TtsState.IDLE,
                 novelId = novelId,
@@ -350,6 +381,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
         ensureReady {
             if (!requestAudioFocus()) {
+                AppLogger.e("TtsManager", "playChapter: Audio focus request denied")
                 _playbackInfo.value = TtsPlaybackInfo(
                     state = TtsState.ERROR,
                     errorMessage = "Could not gain audio focus."
@@ -369,6 +401,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 currentChunkIndex = currentChunkIndex,
                 errorMessage = null
             )
+            AppLogger.i("TtsManager", "Playback state: PLAYING, chunk=$currentChunkIndex/${chunks.size}")
 
             TtsPlaybackService.start(context)
             speakCurrentChunk()
@@ -379,10 +412,13 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         val engine = tts ?: return
         val detected = detectLocaleForText(sample)
         var result = engine.setLanguage(detected)
+        AppLogger.i("TtsManager", "configureLanguageForText: detected=$detected, setLanguage result=$result")
         if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
             result = engine.setLanguage(Locale.US)
+            AppLogger.i("TtsManager", "Fallback setLanguage(Locale.US) result=$result")
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                engine.setLanguage(Locale.getDefault())
+                val sysRes = engine.setLanguage(Locale.getDefault())
+                AppLogger.i("TtsManager", "Fallback setLanguage(getDefault) result=$sysRes")
             }
         }
     }
@@ -436,6 +472,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
         val engine = tts
         if (engine == null || !isInitialized) {
+            AppLogger.w("TtsManager", "speakCurrentChunk: engine not ready, calling initEngine")
             initEngine {
                 speakCurrentChunk()
             }
@@ -448,27 +485,33 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
 
         val result = engine.speak(chunk, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+        AppLogger.d("TtsManager", "speak: utteranceId=$utteranceId, chunkIndex=$index, len=${chunk.length}, result=$result")
+
         if (result != TextToSpeech.SUCCESS) {
-            Log.w(tag, "engine.speak returned $result on chunk $index. Recovering engine...")
+            AppLogger.w("TtsManager", "engine.speak returned $result on chunk $index. Recovering engine...")
             initEngine {
                 val retryEngine = tts
-                retryEngine?.speak(chunk, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+                val retryResult = retryEngine?.speak(chunk, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+                AppLogger.i("TtsManager", "retry speak result=$retryResult")
             }
         }
     }
 
     fun pause() {
+        AppLogger.i("TtsManager", "pause() called")
         isSpeakingActive = false
         try {
             tts?.stop()
         } catch (e: Exception) {
-            Log.w(tag, "Error during tts.stop on pause: ${e.localizedMessage}")
+            AppLogger.w("TtsManager", "Error during tts.stop on pause: ${e.localizedMessage}")
         }
         abandonAudioFocus()
         _playbackInfo.value = _playbackInfo.value.copy(state = TtsState.PAUSED)
+        AppLogger.i("TtsManager", "Playback state: PAUSED")
     }
 
     fun resume() {
+        AppLogger.i("TtsManager", "resume() called")
         if (chunks.isEmpty()) return
 
         ensureReady {
@@ -478,19 +521,23 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                     state = TtsState.PLAYING,
                     errorMessage = null
                 )
+                AppLogger.i("TtsManager", "Playback state: PLAYING, chunk=$currentChunkIndex")
                 TtsPlaybackService.start(context)
                 speakCurrentChunk()
+            } else {
+                AppLogger.w("TtsManager", "resume() failed: audio focus denied")
             }
         }
     }
 
     fun stop(triggerServiceStop: Boolean = true) {
+        AppLogger.i("TtsManager", "stop() called (triggerServiceStop=$triggerServiceStop)")
         isSpeakingActive = false
         lastAdvancedChunk = -1
         try {
             tts?.stop()
         } catch (e: Exception) {
-            Log.w(tag, "Error during tts.stop: ${e.localizedMessage}")
+            AppLogger.w("TtsManager", "Error during tts.stop: ${e.localizedMessage}")
         }
         abandonAudioFocus()
         _playbackInfo.value = _playbackInfo.value.copy(
@@ -498,6 +545,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             currentChunkIndex = 0,
             errorMessage = null
         )
+        AppLogger.i("TtsManager", "Playback state: IDLE")
         if (triggerServiceStop) {
             TtsPlaybackService.stop(context)
         }
@@ -506,6 +554,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     fun seekToChunk(index: Int) {
         if (chunks.isEmpty()) return
         val target = index.coerceIn(0, chunks.size - 1)
+        AppLogger.i("TtsManager", "seekToChunk: target=$target")
         lastAdvancedChunk = target - 1
         currentChunkIndex = target
         _playbackInfo.value = _playbackInfo.value.copy(
@@ -573,7 +622,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                     chapterId = targetChapter.id,
                     chapterTitle = targetChapter.title,
                     content = rendered,
-                    startFromChunkIndex = 0
+                    startFromChunkIndex = 0,
+                    maxChars = currentMaxChars
                 )
             } else {
                 stop(triggerServiceStop = true)
@@ -616,9 +666,17 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     fun sanitizeSpeechText(raw: String): String {
         var s = raw
-        // Strip residual HTML/XML tags
+        if (s.isEmpty()) return ""
+
+        // 1. Safety check that input isn't absurdly long (truncate per chunk if > 4000 chars)
+        if (s.length > 4000) {
+            s = s.take(4000)
+        }
+
+        // 2. Strip residual HTML/XML tags
         s = s.replace(Regex("<[^>]+>"), " ")
-        // Unescape entities
+
+        // 3. Unescape entities
         s = s.replace("&nbsp;", " ")
             .replace("&amp;", " and ")
             .replace("&lt;", " ")
@@ -629,21 +687,89 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             .replace("&mdash;", " — ")
             .replace("&ndash;", " – ")
             .replace("&hellip;", " ... ")
-        // Remove unprintable control characters and zero-width spaces
+
+        // 4. Remove unprintable control characters and zero-width spaces
         s = s.filter { ch ->
             val c = ch.code
             c == 0xA || c == 0xD || c == 0x9 ||
                     (c in 0x20..0xD7FF) ||
                     (c in 0xE000..0xFFFD)
         }
-        // Remove runs of decorative symbols that make TTS engines fail with ERROR_SYNTHESIS
+
+        // 5. Remove runs of repeated punctuation (e.g. ".....", "!!!!!", "????", ",,,,")
+        s = s.replace(Regex("\\.{2,}"), ".")
+        s = s.replace(Regex("!{2,}"), "!")
+        s = s.replace(Regex("\\?{2,}"), "?")
+        s = s.replace(Regex(",{2,}"), ",")
+
+        // 6. Remove runs of decorative symbols that make TTS engines fail with ERROR_SYNTHESIS
         s = s.replace(Regex("[-*=_~]{2,}"), " ")
+
+        // 7. Common abbreviations so TTS doesn't stumble
+        s = replaceCommonAbbreviations(s)
+
+        // 8. Roman numerals in chapter/volume titles or parentheses (e.g. "Chapter IV" -> "Chapter 4")
+        s = replaceRomanNumerals(s)
+
         return s.trim()
+    }
+
+    private fun replaceCommonAbbreviations(text: String): String {
+        var s = text
+        s = s.replace(Regex("""\bMr\."""), "Mister")
+        s = s.replace(Regex("""\bMrs\."""), "Missus")
+        s = s.replace(Regex("""\bMs\."""), "Miss")
+        s = s.replace(Regex("""\bDr\."""), "Doctor")
+        s = s.replace(Regex("""\bProf\."""), "Professor")
+        s = s.replace(Regex("""\bSt\."""), "Saint")
+        s = s.replace(Regex("""\bvs\.""", RegexOption.IGNORE_CASE), "versus")
+        s = s.replace(Regex("""\betc\.""", RegexOption.IGNORE_CASE), "etcetera")
+        s = s.replace(Regex("""\be\.g\.""", RegexOption.IGNORE_CASE), "for example")
+        s = s.replace(Regex("""\bi\.e\.""", RegexOption.IGNORE_CASE), "that is")
+        s = s.replace(Regex("""\bCh\.(\s*\d+)""", RegexOption.IGNORE_CASE), "Chapter $1")
+        s = s.replace(Regex("""\bVol\.(\s*\d+)""", RegexOption.IGNORE_CASE), "Volume $1")
+        s = s.replace(Regex("""\bNo\.(\s*\d+)""", RegexOption.IGNORE_CASE), "Number $1")
+        return s
+    }
+
+    private fun replaceRomanNumerals(text: String): String {
+        val headingRegex = Regex("""(?i)\b(Chapter|Volume|Vol|Book|Part|Act|Scene|Section|Episode)\s+([IVXLCDM]+)\b""")
+        var s = headingRegex.replace(text) { match ->
+            val prefix = match.groupValues[1]
+            val roman = match.groupValues[2]
+            val dec = romanToDecimal(roman)
+            if (dec != null) "$prefix $dec" else match.value
+        }
+
+        val parenRegex = Regex("""\(([IVXLCDM]+)\)""")
+        s = parenRegex.replace(s) { match ->
+            val roman = match.groupValues[1]
+            val dec = romanToDecimal(roman)
+            if (dec != null) "($dec)" else match.value
+        }
+        return s
+    }
+
+    private fun romanToDecimal(roman: String): Int? {
+        val upper = roman.uppercase()
+        val values = mapOf('I' to 1, 'V' to 5, 'X' to 10, 'L' to 50, 'C' to 100, 'D' to 500, 'M' to 1000)
+        var total = 0
+        var prev = 0
+        for (i in upper.length - 1 downTo 0) {
+            val v = values[upper[i]] ?: return null
+            if (v < prev) {
+                total -= v
+            } else {
+                total += v
+                prev = v
+            }
+        }
+        return if (total in 1..4999) total else null
     }
 
     private fun requestAudioFocus(): Boolean {
         val am = audioManager ?: return true
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val playbackAttributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -662,10 +788,13 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 AudioManager.AUDIOFOCUS_GAIN
             ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         }
+        AppLogger.i("TtsManager", "requestAudioFocus result: granted=$granted")
+        return granted
     }
 
     private fun abandonAudioFocus() {
         val am = audioManager ?: return
+        AppLogger.i("TtsManager", "abandonAudioFocus called")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
             audioFocusRequest = null
@@ -676,11 +805,12 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     }
 
     fun shutdown() {
+        AppLogger.i("TtsManager", "shutdown called")
         stop(triggerServiceStop = true)
         try {
             tts?.shutdown()
         } catch (e: Exception) {
-            Log.w(tag, "TTS shutdown: ${e.localizedMessage}")
+            AppLogger.w("TtsManager", "TTS shutdown warning: ${e.localizedMessage}")
         }
         tts = null
         isInitialized = false

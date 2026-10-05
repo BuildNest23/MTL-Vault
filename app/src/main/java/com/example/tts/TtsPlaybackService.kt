@@ -85,10 +85,15 @@ class TtsPlaybackService : Service() {
             val intent = Intent(context, TtsPlaybackService::class.java).apply {
                 action = ACTION_START
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+                com.example.logging.AppLogger.i("TtsPlaybackService", "Service started with action=$ACTION_START")
+            } catch (e: Exception) {
+                com.example.logging.AppLogger.e("TtsPlaybackService", "Failed to start service", e)
             }
         }
 
@@ -96,12 +101,18 @@ class TtsPlaybackService : Service() {
             val intent = Intent(context, TtsPlaybackService::class.java).apply {
                 action = ACTION_STOP
             }
-            context.startService(intent)
+            try {
+                context.startService(intent)
+                com.example.logging.AppLogger.i("TtsPlaybackService", "Service stopped with action=$ACTION_STOP")
+            } catch (e: Exception) {
+                com.example.logging.AppLogger.e("TtsPlaybackService", "Failed to stop service", e)
+            }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        com.example.logging.AppLogger.i("TtsPlaybackService", "Service onCreate")
         createNotificationChannel()
         setupMediaSession()
         observeTtsManager()
@@ -128,7 +139,7 @@ class TtsPlaybackService : Service() {
                 }
 
                 override fun onStop() {
-                    ttsManager?.stop()
+                    ttsManager?.stop(triggerServiceStop = false)
                     stopForegroundNotification()
                     stopSelf()
                 }
@@ -143,7 +154,7 @@ class TtsPlaybackService : Service() {
 
                 override fun onCustomAction(action: String, extras: Bundle?) {
                     if (action == ACTION_STOP) {
-                        ttsManager?.stop()
+                        ttsManager?.stop(triggerServiceStop = false)
                         stopForegroundNotification()
                         stopSelf()
                     }
@@ -155,6 +166,7 @@ class TtsPlaybackService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val ttsManager = (application as? MtlVaultApplication)?.ttsManager
+        com.example.logging.AppLogger.i("TtsPlaybackService", "onStartCommand: action=${intent?.action}")
 
         when (intent?.action) {
             ACTION_START -> {
@@ -186,7 +198,7 @@ class TtsPlaybackService : Service() {
                 ttsManager?.skipToNextChapter()
             }
             ACTION_STOP -> {
-                ttsManager?.stop()
+                ttsManager?.stop(triggerServiceStop = false)
                 stopForegroundNotification()
                 stopSelf()
             }
@@ -201,10 +213,15 @@ class TtsPlaybackService : Service() {
     }
 
     private fun startForegroundCompat(notification: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            com.example.logging.AppLogger.d("TtsPlaybackService", "startForegroundCompat succeeded")
+        } catch (e: Exception) {
+            com.example.logging.AppLogger.e("TtsPlaybackService", "startForegroundCompat failed", e)
         }
     }
 
@@ -451,8 +468,8 @@ class TtsPlaybackService : Service() {
 
         builder.addAction(
             Notification.Action.Builder(
-                R.drawable.ic_tts_close,
-                "✕",
+                R.drawable.ic_tts_stop,
+                "Stop",
                 stopPendingIntent
             ).build()
         )

@@ -74,22 +74,7 @@
             android:tint="#102B1E" />
 
         <Space
-            android:layout_width="24dp"
-            android:layout_height="1dp" />
-
-        <!-- Close Button X -->
-        <ImageButton
-            android:id="@+id/tts_btn_stop"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="X"
-            android:scaleType="centerInside"
-            android:src="@drawable/ic_tts_close"
-            android:tint="#EDEDED" />
-
-        <Space
-            android:layout_width="24dp"
+            android:layout_width="20dp"
             android:layout_height="1dp" />
 
         <!-- Next Button >> -->
@@ -101,6 +86,21 @@
             android:contentDescription="Next Paragraph"
             android:scaleType="centerInside"
             android:src="@drawable/ic_tts_next"
+            android:tint="#EDEDED" />
+
+        <Space
+            android:layout_width="20dp"
+            android:layout_height="1dp" />
+
+        <!-- Stop Button -->
+        <ImageButton
+            android:id="@+id/tts_btn_stop"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Stop"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_tts_stop"
             android:tint="#EDEDED" />
     </LinearLayout>
 

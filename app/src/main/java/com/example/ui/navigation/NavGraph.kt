@@ -125,7 +125,7 @@ fun MtlVaultNavGraph(
             ) { backStackEntry ->
                 val novelId = backStackEntry.arguments?.getString("novelId") ?: ""
                 val viewModel = remember(novelId) {
-                    NovelDetailViewModel(novelId, application.novelRepository)
+                    NovelDetailViewModel(novelId, application.novelRepository, application.settingsDataStore)
                 }
                 NovelDetailScreen(
                     viewModel = viewModel,

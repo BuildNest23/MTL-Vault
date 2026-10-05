@@ -67,6 +67,17 @@ class ReaderViewModel(
         loadChapter(initialChapterId)
         ttsManager.onNextChapterRequested = { nextChapter(autoPlay = true) }
         ttsManager.onPrevChapterRequested = { prevChapter(autoPlay = true) }
+
+        viewModelScope.launch {
+            var previousSplitMode: String? = null
+            settingsDataStore.settingsFlow.collect { newSettings ->
+                val currentMode = newSettings.splitLongParagraphs
+                if (previousSplitMode != null && previousSplitMode != currentMode) {
+                    onSplitModeChanged(previousSplitMode!!, currentMode)
+                }
+                previousSplitMode = currentMode
+            }
+        }
     }
 
     private val _initialParagraphIndex = MutableStateFlow<Int?>(null)
@@ -80,6 +91,17 @@ class ReaderViewModel(
     private var lastSavedProgress: Float = -1f
 
     fun loadChapter(chapterId: String) {
+        saveCurrentPositionNow()
+        viewModelScope.launch {
+            loadChapterInternal(chapterId, autoPlayIfTtsActive = false)
+        }
+    }
+
+    private suspend fun loadChapterInternal(
+        chapterId: String,
+        autoPlayIfTtsActive: Boolean = false
+    ) {
+        com.example.logging.AppLogger.i("ReaderViewModel", "loadChapter: novelId=$novelId, chapterId=$chapterId")
         _currentChapterId.value = chapterId
         lastSavedIndex = -1
         lastSavedParagraph = -1
@@ -87,25 +109,27 @@ class ReaderViewModel(
         lastScrollIndex = 0
         lastScrollParagraphIndex = 0
         lastScrollProgress = 0f
-        viewModelScope.launch {
-            val chapter = repository.getChapterByIdSync(chapterId)
-            _currentChapter.value = chapter
-            if (chapter != null) {
-                val targetParagraph = if (chapter.readingParagraphIndex > 0) {
-                    chapter.readingParagraphIndex
-                } else {
-                    chapter.scrollPosition
-                }
-                _initialParagraphIndex.value = targetParagraph
-                lastScrollParagraphIndex = targetParagraph
-                lastScrollIndex = targetParagraph
-                _renderedContent.value = repository.getRenderedChapterContent(novelId, chapter)
-                repository.updateLastChapter(novelId, chapter.id)
-                if (autoPlayTtsOnLoad && !hasAutoPlayed) {
-                    hasAutoPlayed = true
-                    playCurrentChapterTts(startFromChunkIndex = targetParagraph)
-                }
+
+        val chapter = repository.getChapterByIdSync(chapterId)
+        _currentChapter.value = chapter
+        if (chapter != null) {
+            val targetParagraph = chapter.readingParagraphIndex.coerceAtLeast(0)
+            _initialParagraphIndex.value = targetParagraph
+            lastScrollParagraphIndex = targetParagraph
+            lastScrollIndex = targetParagraph
+            val rendered = repository.getRenderedChapterContent(novelId, chapter)
+            _renderedContent.value = rendered
+            repository.updateLastChapter(novelId, chapter.id)
+            com.example.logging.AppLogger.i("ReaderViewModel", "Chapter loaded: id=${chapter.id}, targetParagraph=$targetParagraph, renderedLen=${rendered.length}")
+
+            if (autoPlayIfTtsActive) {
+                startTtsForChapter(chapter, rendered, 0)
+            } else if (autoPlayTtsOnLoad && !hasAutoPlayed) {
+                hasAutoPlayed = true
+                playCurrentChapterTts(startFromChunkIndex = targetParagraph)
             }
+        } else {
+            com.example.logging.AppLogger.w("ReaderViewModel", "loadChapter: chapter not found for id=$chapterId")
         }
     }
 
@@ -125,8 +149,10 @@ class ReaderViewModel(
         lastSavedProgress = scrollPercent
 
         viewModelScope.launch(Dispatchers.IO) {
+            com.example.logging.AppLogger.d("ReaderViewModel", "updateReadingPosition: id=${chapter.id}, para=$paragraphIndex, scrollY=$scrollY, prog=$scrollPercent")
             repository.updateReadingPosition(chapter.id, paragraphIndex, scrollY)
             if (scrollPercent >= 0.85f && !chapter.read) {
+                com.example.logging.AppLogger.i("ReaderViewModel", "Auto-marking chapter read at 85%: id=${chapter.id}")
                 repository.setChapterRead(chapter.id, true)
                 _currentChapter.value = _currentChapter.value?.copy(read = true)
             }
@@ -147,8 +173,10 @@ class ReaderViewModel(
         lastSavedIndex = lastScrollIndex
         lastSavedProgress = lastScrollProgress
         viewModelScope.launch(Dispatchers.IO) {
+            com.example.logging.AppLogger.d("ReaderViewModel", "saveCurrentPositionNow: id=${chapter.id}, para=$lastScrollParagraphIndex, scrollY=$lastScrollIndex")
             repository.updateReadingPosition(chapter.id, lastScrollParagraphIndex, lastScrollIndex)
             if (lastScrollProgress >= 0.85f && !chapter.read) {
+                com.example.logging.AppLogger.i("ReaderViewModel", "Marking chapter read: id=${chapter.id}")
                 repository.setChapterRead(chapter.id, true)
                 _currentChapter.value = _currentChapter.value?.copy(read = true)
             }
@@ -159,6 +187,7 @@ class ReaderViewModel(
         val chapter = _currentChapter.value ?: return
         viewModelScope.launch(Dispatchers.IO) {
             val newStatus = !chapter.read
+            com.example.logging.AppLogger.i("ReaderViewModel", "toggleReadStatus: id=${chapter.id}, newStatus=$newStatus")
             repository.setChapterRead(chapter.id, newStatus)
             _currentChapter.value = _currentChapter.value?.copy(read = newStatus)
         }
@@ -166,21 +195,15 @@ class ReaderViewModel(
 
     fun prevChapter(autoPlay: Boolean = false) {
         val chapter = _currentChapter.value ?: return
+        saveCurrentPositionNow()
+        com.example.logging.AppLogger.i("ReaderViewModel", "prevChapter requested: currentOrder=${chapter.orderIndex}, autoPlay=$autoPlay")
         viewModelScope.launch {
             val prev = repository.getPrevChapter(novelId, chapter.orderIndex)
             if (prev != null) {
                 val shouldPlay = autoPlay || ttsManager.isPlaying()
-                _currentChapterId.value = prev.id
-                val loadedChapter = repository.getChapterByIdSync(prev.id) ?: return@launch
-                _currentChapter.value = loadedChapter
-                val rendered = repository.getRenderedChapterContent(novelId, loadedChapter)
-                _renderedContent.value = rendered
-                repository.updateLastChapter(novelId, loadedChapter.id)
-
-                if (shouldPlay) {
-                    startTtsForChapter(loadedChapter, rendered, 0)
-                }
+                loadChapterInternal(prev.id, autoPlayIfTtsActive = shouldPlay)
             } else {
+                com.example.logging.AppLogger.i("ReaderViewModel", "prevChapter: first chapter reached")
                 _events.emit(ReaderEvent.ShowToast("First chapter reached."))
             }
         }
@@ -188,21 +211,15 @@ class ReaderViewModel(
 
     fun nextChapter(autoPlay: Boolean = false) {
         val chapter = _currentChapter.value ?: return
+        saveCurrentPositionNow()
+        com.example.logging.AppLogger.i("ReaderViewModel", "nextChapter requested: currentOrder=${chapter.orderIndex}, autoPlay=$autoPlay")
         viewModelScope.launch {
             val next = repository.getNextChapter(novelId, chapter.orderIndex)
             if (next != null) {
                 val shouldPlay = autoPlay || ttsManager.isPlaying()
-                _currentChapterId.value = next.id
-                val loadedChapter = repository.getChapterByIdSync(next.id) ?: return@launch
-                _currentChapter.value = loadedChapter
-                val rendered = repository.getRenderedChapterContent(novelId, loadedChapter)
-                _renderedContent.value = rendered
-                repository.updateLastChapter(novelId, loadedChapter.id)
-
-                if (shouldPlay) {
-                    startTtsForChapter(loadedChapter, rendered, 0)
-                }
+                loadChapterInternal(next.id, autoPlayIfTtsActive = shouldPlay)
             } else {
+                com.example.logging.AppLogger.i("ReaderViewModel", "nextChapter: last chapter reached")
                 ttsManager.stop()
                 _events.emit(ReaderEvent.ShowToast("Last chapter reached."))
             }
@@ -270,16 +287,19 @@ class ReaderViewModel(
     }
 
     private fun startTtsForChapter(chapter: ChapterEntity, content: String, startFromChunkIndex: Int) {
+        val currentSettings = settings.value
+        val splitMode = com.example.data.model.ParagraphSplitMode.fromString(currentSettings.splitLongParagraphs)
         ttsManager.playChapter(
             novelId = novelId,
             chapterId = chapter.id,
             chapterTitle = chapter.title,
             content = content,
             startFromChunkIndex = startFromChunkIndex,
+            maxChars = splitMode.maxChars,
             onChapterComplete = {
                 viewModelScope.launch {
-                    val currentSettings = settingsDataStore.settingsFlow.first()
-                    if (currentSettings.continueReading) {
+                    val latestSettings = settingsDataStore.settingsFlow.first()
+                    if (latestSettings.continueReading) {
                         nextChapter(autoPlay = true)
                     } else {
                         ttsManager.stop()
@@ -287,6 +307,46 @@ class ReaderViewModel(
                 }
             }
         )
+    }
+
+    private fun onSplitModeChanged(oldMode: String, newMode: String) {
+        val chapter = _currentChapter.value ?: return
+        val content = _renderedContent.value
+        if (content.isBlank()) return
+
+        val oldSplit = com.example.data.model.ParagraphSplitMode.fromString(oldMode)
+        val newSplit = com.example.data.model.ParagraphSplitMode.fromString(newMode)
+
+        val oldChunks = com.example.tts.ParagraphSplitter.parseParagraphChunks(content, oldSplit.maxChars)
+        val newChunks = com.example.tts.ParagraphSplitter.parseParagraphChunks(content, newSplit.maxChars)
+
+        val isTtsActive = ttsManager.isPlaying() || ttsManager.playbackInfo.value.state == com.example.tts.TtsState.PAUSED
+        val activeChunkIndex = if (isTtsActive) {
+            ttsManager.playbackInfo.value.currentChunkIndex
+        } else {
+            lastScrollParagraphIndex
+        }
+
+        val safeOldIdx = activeChunkIndex.coerceIn(0, (oldChunks.size - 1).coerceAtLeast(0))
+        val origIndex = if (oldChunks.isNotEmpty()) oldChunks[safeOldIdx].originalParagraphIndex else 0
+
+        val mappedNewIndex = newChunks.indexOfFirst { it.originalParagraphIndex == origIndex }.let {
+            if (it >= 0) it else 0
+        }.coerceIn(0, (newChunks.size - 1).coerceAtLeast(0))
+
+        lastScrollParagraphIndex = mappedNewIndex
+        _initialParagraphIndex.value = mappedNewIndex
+        viewModelScope.launch {
+            repository.updateReadingPosition(chapter.id, mappedNewIndex, 0)
+        }
+
+        if (isTtsActive) {
+            val wasPaused = ttsManager.playbackInfo.value.state == com.example.tts.TtsState.PAUSED
+            startTtsForChapter(chapter, content, mappedNewIndex)
+            if (wasPaused) {
+                ttsManager.pause()
+            }
+        }
     }
 
     fun setTtsRate(rate: Float) {

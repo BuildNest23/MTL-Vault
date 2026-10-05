@@ -148,19 +148,28 @@ fun ReaderScreen(
         }
     }
 
-    val paragraphs = remember(renderedContent) {
-        TtsManager.parseParagraphs(renderedContent)
+    val paragraphChunks = remember(renderedContent, settings.splitLongParagraphs) {
+        val splitMode = com.example.data.model.ParagraphSplitMode.fromString(settings.splitLongParagraphs)
+        com.example.tts.TtsManager.parseParagraphChunks(renderedContent, splitMode.maxChars)
+    }
+
+    val paragraphs = remember(paragraphChunks) {
+        paragraphChunks.map { it.text }
     }
 
     // Restore scroll position on chapter change / initial load to saved paragraph
     var hasRestoredPositionForChapter by remember(chapter?.id) { mutableStateOf(false) }
+    LaunchedEffect(settings.splitLongParagraphs) {
+        hasRestoredPositionForChapter = false
+    }
     LaunchedEffect(chapter?.id, paragraphs.size, initialParagraphIndex) {
         val currChapter = chapter
         if (currChapter != null && paragraphs.isNotEmpty() && !hasRestoredPositionForChapter) {
-            val targetPara = initialParagraphIndex ?: (if (currChapter.readingParagraphIndex > 0) currChapter.readingParagraphIndex else currChapter.scrollPosition)
-            if (targetPara > 0 && targetPara < paragraphs.size) {
+            val rawTarget = initialParagraphIndex ?: currChapter.readingParagraphIndex
+            val clampedPara = rawTarget.coerceIn(0, (paragraphs.size - 1).coerceAtLeast(0))
+            if (clampedPara > 0) {
                 // Item 0 is header_title, item 1 is para 0, item k + 1 is para k
-                val targetItemIndex = targetPara + 1
+                val targetItemIndex = clampedPara + 1
                 lazyListState.scrollToItem(targetItemIndex, 0)
             } else {
                 lazyListState.scrollToItem(0, 0)
@@ -392,11 +401,14 @@ fun ReaderScreen(
                         .padding(horizontal = 4.dp, vertical = 4.dp)
                 }
 
+                val chunk = paragraphChunks.getOrNull(paraIndex)
+                val chunkBottomSpacing = if (chunk != null && !chunk.isLastChunkOfParagraph) 4.dp else 10.dp
+
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .widthIn(max = settings.maxWidth.dp)
-                        .padding(bottom = 10.dp)
+                        .padding(bottom = chunkBottomSpacing)
                 ) {
                     Box(modifier = paraModifier) {
                         Row(

@@ -6,6 +6,11 @@ import com.example.data.preferences.SettingsDataStore
 import com.example.data.repository.NovelRepository
 import com.example.tts.TtsManager
 
+import com.example.logging.AppLogger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
 class MtlVaultApplication : Application() {
 
     lateinit var database: AppDatabase
@@ -22,6 +27,7 @@ class MtlVaultApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        AppLogger.init(this)
         database = AppDatabase.getInstance(this)
         settingsDataStore = SettingsDataStore(this)
         novelRepository = NovelRepository(
@@ -30,6 +36,12 @@ class MtlVaultApplication : Application() {
             settingsDataStore = settingsDataStore
         )
         ttsManager = TtsManager(this)
+
+        CoroutineScope(Dispatchers.Default).launch {
+            settingsDataStore.settingsFlow.collect { settings ->
+                AppLogger.isDetailedLogging = settings.detailedLogging
+            }
+        }
     }
 
     override fun onTerminate() {
