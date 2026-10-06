@@ -76,6 +76,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.draw.drawBehind
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.derivedStateOf
@@ -749,25 +750,6 @@ private fun ReaderParagraphItem(
 
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
-    val annotatedText = remember(text, highlightRange, highlightColor) {
-        val range = highlightRange
-        if (range == null || range.second <= range.first) {
-            AnnotatedString(text)
-        } else {
-            val builder = AnnotatedString.Builder(text)
-            val start = range.first.coerceIn(0, text.length)
-            val end = range.second.coerceIn(start, text.length)
-            if (end > start) {
-                builder.addStyle(
-                    SpanStyle(background = highlightColor),
-                    start,
-                    end
-                )
-            }
-            builder.toAnnotatedString()
-        }
-    }
-
     // Keyed on the range ONLY: a background-color span never changes line geometry, so the
     // existing layout is valid. Keying on textLayoutResult made every sentence scroll twice.
     LaunchedEffect(highlightRange) {
@@ -808,11 +790,24 @@ private fun ReaderParagraphItem(
                 )
             }
     ) {
+        // The highlight is DRAWN behind the text instead of being baked into an AnnotatedString.
+        // Changing the AnnotatedString forced a full text re-measure/re-layout of the paragraph on
+        // the main thread at every new sentence (the scroll jank). Drawing only invalidates draw.
         Text(
-            text = annotatedText,
+            text = text,
             style = textStyle,
             onTextLayout = { textLayoutResult = it },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .drawBehind {
+                    val range = highlightRange ?: return@drawBehind
+                    val layout = textLayoutResult ?: return@drawBehind
+                    val start = range.first.coerceIn(0, text.length)
+                    val end = range.second.coerceIn(start, text.length)
+                    if (end > start) {
+                        drawPath(layout.getPathForRange(start, end), highlightColor)
+                    }
+                }
         )
     }
 }
