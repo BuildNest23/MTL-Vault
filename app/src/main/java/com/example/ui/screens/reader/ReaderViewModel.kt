@@ -65,6 +65,20 @@ class ReaderViewModel(
     private val _events = MutableSharedFlow<ReaderEvent>()
     val events: SharedFlow<ReaderEvent> = _events.asSharedFlow()
 
+    private val _initialParagraphIndex = MutableStateFlow<Int?>(null)
+    val initialParagraphIndex: StateFlow<Int?> = _initialParagraphIndex.asStateFlow()
+
+    private var lastScrollParagraphIndex: Int = 0
+    private var lastScrollIndex: Int = 0
+    private var lastScrollProgress: Float = 0f
+    private var lastSavedParagraph: Int = -1
+    private var lastSavedIndex: Int = -1
+    private var lastSavedProgress: Float = -1f
+
+    // IMPORTANT: keep this init block AFTER every property declaration above. viewModelScope runs on
+    // Dispatchers.Main.immediate, so loadChapter() can touch those properties before they are
+    // initialized if this block is placed earlier (caused a NullPointerException on opening a chapter).
+
     init {
         loadChapter(initialChapterId)
         ttsManager.onNextChapterRequested = { nextChapter(autoPlay = true) }
@@ -81,16 +95,6 @@ class ReaderViewModel(
             }
         }
     }
-
-    private val _initialParagraphIndex = MutableStateFlow<Int?>(null)
-    val initialParagraphIndex: StateFlow<Int?> = _initialParagraphIndex.asStateFlow()
-
-    private var lastScrollParagraphIndex: Int = 0
-    private var lastScrollIndex: Int = 0
-    private var lastScrollProgress: Float = 0f
-    private var lastSavedParagraph: Int = -1
-    private var lastSavedIndex: Int = -1
-    private var lastSavedProgress: Float = -1f
 
     fun loadChapter(chapterId: String) {
         saveCurrentPositionNow()
