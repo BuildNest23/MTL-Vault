@@ -76,6 +76,8 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -253,8 +255,27 @@ fun ReaderScreen(
         }
     }
 
+    // --- Auto-scroll vs. user-scroll arbitration -------------------------------------------
+    // Our own TTS auto-scrolls must never fight the user's finger/fling, which caused jitter.
+    val autoScrollRunning = remember { booleanArrayOf(false) }
+    val lastUserScrollAt = remember { longArrayOf(0L) }
+    val lastAutoScrollEnd = remember { longArrayOf(0L) }
+    LaunchedEffect(lazyListState) {
+        snapshotFlow { lazyListState.isScrollInProgress }.collect {
+            // Scroll started/ended and it was not caused by our own animation => user scroll
+            val now = android.os.SystemClock.uptimeMillis()
+            // Ignore the state flip caused by the end of our own animation
+            if (!autoScrollRunning[0] && now - lastAutoScrollEnd[0] > 300L) lastUserScrollAt[0] = now
+        }
+    }
+    val userIsScrolling: () -> Boolean = {
+        (lazyListState.isScrollInProgress && !autoScrollRunning[0]) ||
+            android.os.SystemClock.uptimeMillis() - lastUserScrollAt[0] < 2500L
+    }
+
     // Auto-scroll when TTS moves to a new paragraph, ensuring partially visible paragraphs also scroll up
     LaunchedEffect(ttsInfo.currentChunkIndex, ttsInfo.chapterId, chapter?.id) {
+        if (userIsScrolling()) return@LaunchedEffect
         if ((ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED) &&
             ttsInfo.chapterId == chapter?.id
         ) {
@@ -276,7 +297,12 @@ fun ReaderScreen(
                         }
 
                 if (!isComfortablyVisible) {
-                    lazyListState.animateScrollToItem(targetItemIndex)
+                    autoScrollRunning[0] = true
+                    try {
+                        lazyListState.animateScrollToItem(targetItemIndex)
+                    } finally {
+                        autoScrollRunning[0] = false; lastAutoScrollEnd[0] = android.os.SystemClock.uptimeMillis()
+                    }
                 }
             }
         }
@@ -307,6 +333,7 @@ fun ReaderScreen(
 
     val onSentenceBoundsMeasured: (Int, Float, Float) -> Unit = remember(lazyListState) {
         { paraIdx, sTop, sBottom ->
+          if (!userIsScrolling()) {
             val targetItemIndex = paraIdx + 1
             val layoutInfo = lazyListState.layoutInfo
             val itemInfo = layoutInfo.visibleItemsInfo.find { it.index == targetItemIndex }
@@ -316,7 +343,8 @@ fun ReaderScreen(
 
             if (itemInfo == null) {
                 coroutineScope.launch {
-                    lazyListState.animateScrollToItem(targetItemIndex)
+                    autoScrollRunning[0] = true
+                    try { lazyListState.animateScrollToItem(targetItemIndex) } finally { autoScrollRunning[0] = false; lastAutoScrollEnd[0] = android.os.SystemClock.uptimeMillis() }
                 }
             } else {
                 val screenTop = itemInfo.offset + sTop
@@ -325,15 +353,18 @@ fun ReaderScreen(
                 if (screenTop < topMargin) {
                     val delta = screenTop - topMargin - 40f
                     coroutineScope.launch {
-                        lazyListState.animateScrollBy(delta)
+                        autoScrollRunning[0] = true
+                        try { lazyListState.animateScrollBy(delta) } finally { autoScrollRunning[0] = false; lastAutoScrollEnd[0] = android.os.SystemClock.uptimeMillis() }
                     }
                 } else if (screenBottom > bottomMargin) {
                     val delta = screenBottom - bottomMargin + 40f
                     coroutineScope.launch {
-                        lazyListState.animateScrollBy(delta)
+                        autoScrollRunning[0] = true
+                        try { lazyListState.animateScrollBy(delta) } finally { autoScrollRunning[0] = false; lastAutoScrollEnd[0] = android.os.SystemClock.uptimeMillis() }
                     }
                 }
             }
+          }
         }
     }
 
@@ -737,9 +768,13 @@ private fun ReaderParagraphItem(
         }
     }
 
-    LaunchedEffect(highlightRange, textLayoutResult) {
+    // Keyed on the range ONLY: a background-color span never changes line geometry, so the
+    // existing layout is valid. Keying on textLayoutResult made every sentence scroll twice.
+    LaunchedEffect(highlightRange) {
         val range = highlightRange ?: return@LaunchedEffect
-        val layout = textLayoutResult ?: return@LaunchedEffect
+        val layout = textLayoutResult
+            ?: androidx.compose.runtime.snapshotFlow { textLayoutResult }
+                .filterNotNull().first()
         val start = range.first.coerceIn(0, text.length)
         val end = range.second.coerceIn(start, text.length)
         if (end > start) {
