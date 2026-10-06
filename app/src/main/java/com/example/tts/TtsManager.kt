@@ -458,6 +458,9 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 )
                 _highlightState.value = TtsHighlightState()
                 AppLogger.i("TtsManager", "Chapter complete: novelId=$currentNovelId, chapterId=$currentChapterId, totalChunks=${chunks.size}")
+                // Mark as read here, independent of the Reader screen/ViewModel, so it also works when the
+                // screen is off or the reader was closed and TTS keeps going in the background.
+                markChapterReadInBackground(currentChapterId)
                 if (onChapterCompleteCallback != null) {
                     onChapterCompleteCallback?.invoke()
                 } else {
@@ -841,7 +844,23 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
+    private fun markChapterReadInBackground(chapterId: String?) {
+        val id = chapterId ?: return
+        val app = context.applicationContext as? MtlVaultApplication ?: return
+        mainScope.launch {
+            try {
+                app.novelRepository.setChapterRead(id, true)
+                AppLogger.i("TtsManager", "Marked chapter as read: $id")
+            } catch (e: Exception) {
+                AppLogger.w("TtsManager", "Failed to mark chapter read: ${e.message}")
+            }
+        }
+    }
+
     fun skipToNextChapter() {
+        // Skipping forward (notification/headset "next") counts as finishing the chapter,
+        // same as the on-screen Next button does.
+        markChapterReadInBackground(currentChapterId)
         if (onNextChapterRequested != null) {
             onNextChapterRequested?.invoke()
         } else {
