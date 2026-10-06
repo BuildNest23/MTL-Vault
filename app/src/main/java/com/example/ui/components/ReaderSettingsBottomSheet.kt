@@ -204,35 +204,6 @@ fun ReaderSettingsBottomSheet(
                 steps = 11
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Split Long Paragraphs Control
-            Text(
-                text = "Split long paragraphs",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            val splitModes = listOf(
-                com.example.data.model.ParagraphSplitMode.OFF,
-                com.example.data.model.ParagraphSplitMode.SHORT,
-                com.example.data.model.ParagraphSplitMode.MEDIUM,
-                com.example.data.model.ParagraphSplitMode.LONG
-            )
-            val currentSplitMode = com.example.data.model.ParagraphSplitMode.fromString(settings.splitLongParagraphs)
-
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                splitModes.forEachIndexed { index, mode ->
-                    SegmentedButton(
-                        selected = currentSplitMode == mode,
-                        onClick = { onUpdateSettings(settings.copy(splitLongParagraphs = mode.name.lowercase())) },
-                        shape = SegmentedButtonDefaults.itemShape(index = index, count = splitModes.size)
-                    ) {
-                        Text(mode.label, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
         }
     }
 }

@@ -1,9 +1,7 @@
 package com.example.ui.screens.detail
 
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
-import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.entities.NovelEntity
@@ -22,7 +20,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
-import java.io.File
 import java.io.InputStreamReader
 
 import kotlinx.coroutines.flow.onEach
@@ -57,6 +54,10 @@ class NovelDetailViewModel(
         ?.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ReaderSettings())
         ?: MutableStateFlow(ReaderSettings()).asStateFlow()
 
+    val hideReadChapters: StateFlow<Boolean> = settingsDataStore?.hideReadChaptersFlow
+        ?.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+        ?: MutableStateFlow(false).asStateFlow()
+
     private val _events = MutableSharedFlow<DetailEvent>()
     val events: SharedFlow<DetailEvent> = _events.asSharedFlow()
 
@@ -68,6 +69,19 @@ class NovelDetailViewModel(
 
     private val _pendingImportText = MutableStateFlow<String?>(null)
     val pendingImportText: StateFlow<String?> = _pendingImportText.asStateFlow()
+
+    fun toggleHideReadChapters() {
+        viewModelScope.launch {
+            val current = hideReadChapters.value
+            settingsDataStore?.updateHideReadChapters(!current)
+        }
+    }
+
+    fun setHideReadChapters(hide: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore?.updateHideReadChapters(hide)
+        }
+    }
 
     fun toggleSelectionMode() {
         if (_isSelectionMode.value) {
@@ -93,8 +107,18 @@ class NovelDetailViewModel(
         _selectedChapterIds.value = current
     }
 
-    fun selectAllChapters() {
-        _selectedChapterIds.value = chapters.value.map { it.id }.toSet()
+    fun selectAllChapters(visibleIds: Collection<String>? = null) {
+        val ids = if (visibleIds != null) {
+            visibleIds.toSet()
+        } else {
+            val list = if (hideReadChapters.value) {
+                chapters.value.filter { !it.read }.map { it.id }
+            } else {
+                chapters.value.map { it.id }
+            }
+            list.toSet()
+        }
+        _selectedChapterIds.value = ids
     }
 
     fun clearChapterSelection() {
@@ -126,6 +150,18 @@ class NovelDetailViewModel(
         viewModelScope.launch {
             repository.deleteChapter(novelId, chapterId)
             _events.emit(DetailEvent.ShowToast("Chapter deleted."))
+        }
+    }
+
+    fun deleteSelectedChapters() {
+        val selected = _selectedChapterIds.value.toList()
+        if (selected.isEmpty()) return
+        val count = selected.size
+        viewModelScope.launch {
+            repository.deleteChapters(novelId, selected)
+            _selectedChapterIds.value = emptySet()
+            _isSelectionMode.value = false
+            _events.emit(DetailEvent.ShowToast("Deleted $count chapters"))
         }
     }
 
@@ -253,9 +289,5 @@ class NovelDetailViewModel(
                 _events.emit(DetailEvent.ShowToast("Export failed: ${e.localizedMessage}"))
             }
         }
-    }
-
-    private fun safeFileName(name: String): String {
-        return name.replace(Regex("[^a-zA-Z0-9_.-]+"), "_").take(50)
     }
 }

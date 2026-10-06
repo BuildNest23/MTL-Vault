@@ -231,23 +231,25 @@ class TtsPlaybackService : Service() {
         observerJob = serviceScope.launch {
             ttsManager.playbackInfo.collectLatest { info ->
                 updateMediaSessionState(info)
-                if (info.state == TtsState.PLAYING) {
-                    registerBecomingNoisy()
-                    val notif = buildNotification(info)
-                    startForegroundCompat(notif)
-                } else if (info.state == TtsState.PAUSED) {
-                    unregisterBecomingNoisy()
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        stopForeground(STOP_FOREGROUND_DETACH)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        stopForeground(false)
+                when (info.state) {
+                    TtsState.PLAYING -> {
+                        registerBecomingNoisy()
+                        val notif = buildNotification(info)
+                        startForegroundCompat(notif)
                     }
-                    updateNotification(info)
-                } else if (info.state == TtsState.IDLE || info.state == TtsState.ERROR) {
-                    unregisterBecomingNoisy()
-                    stopForegroundNotification()
-                    stopSelf()
+                    TtsState.PAUSED, TtsState.ERROR -> {
+                        unregisterBecomingNoisy()
+                        // While PAUSED (or on TTS error), keep service in foreground and MediaSession active.
+                        // Do not detach and do not stopSelf(). Update notification with Play button.
+                        val notif = buildNotification(info)
+                        startForegroundCompat(notif)
+                    }
+                    TtsState.IDLE -> {
+                        unregisterBecomingNoisy()
+                    }
+                    else -> {
+                        // INITIALIZING or other states
+                    }
                 }
             }
         }
@@ -280,11 +282,11 @@ class TtsPlaybackService : Service() {
         val durationMs = totalChunks * CHUNK_UNIT_MS
         val positionMs = (info.currentChunkIndex.coerceIn(0, totalChunks - 1)) * CHUNK_UNIT_MS
 
-        // Fixed 0.0f speed stops phantom auto-advance past chapter start
+        val speed = if (info.state == TtsState.PLAYING) 1.0f else 0.0f
         val playbackState = PlaybackState.Builder()
             .setActions(actions)
             .addCustomAction(customCloseAction)
-            .setState(state, positionMs, 0.0f)
+            .setState(state, positionMs, speed)
             .build()
 
         session.setPlaybackState(playbackState)
@@ -496,6 +498,16 @@ class TtsPlaybackService : Service() {
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null
+
+        val ttsManager = (application as? MtlVaultApplication)?.ttsManager
+        if (ttsManager != null && !ttsManager.isPlaying()) {
+            ttsManager.releaseEngineIfIdle()
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        com.example.logging.AppLogger.i("TtsPlaybackService", "onTaskRemoved: app swiped from recents, keeping foreground media playback active")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

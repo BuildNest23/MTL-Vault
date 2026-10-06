@@ -26,6 +26,5 @@ data class ReaderSettings(
     val continueReading: Boolean = true,
     val replacementsEnabled: Boolean = true,
     val detailedLogging: Boolean = false,
-    val splitLongParagraphs: String = "medium", // "off", "short", "medium", "long"
-    val openAtFirstUnread: Boolean = true
+    val splitLongParagraphs: String = "medium" // "off", "short", "medium", "long"
 )

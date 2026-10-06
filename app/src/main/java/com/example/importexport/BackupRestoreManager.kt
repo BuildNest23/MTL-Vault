@@ -87,7 +87,6 @@ object BackupRestoreManager {
         settingsObj.put("continueReading", settings.continueReading)
         settingsObj.put("replacementsEnabled", settings.replacementsEnabled)
         settingsObj.put("splitLongParagraphs", settings.splitLongParagraphs)
-        settingsObj.put("openAtFirstUnread", settings.openAtFirstUnread)
         dataObj.put("settings", settingsObj)
 
         root.put("data", dataObj)
@@ -170,8 +169,7 @@ object BackupRestoreManager {
                 ttsVoice = sObj.optString("ttsVoice", ""),
                 continueReading = sObj.optBoolean("continueReading", true),
                 replacementsEnabled = sObj.optBoolean("replacementsEnabled", true),
-                splitLongParagraphs = sObj.optString("splitLongParagraphs", "medium"),
-                openAtFirstUnread = sObj.optBoolean("openAtFirstUnread", true)
+                splitLongParagraphs = sObj.optString("splitLongParagraphs", "medium")
             )
         }
 

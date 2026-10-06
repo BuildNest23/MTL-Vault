@@ -12,6 +12,7 @@ import com.example.data.preferences.SettingsDataStore
 import com.example.data.repository.NovelRepository
 import com.example.tts.TtsManager
 import com.example.tts.TtsPlaybackInfo
+import com.example.tts.TtsHighlightState
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -59,6 +60,7 @@ class ReaderViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ReaderSettings())
 
     val ttsPlaybackInfo: StateFlow<TtsPlaybackInfo> = ttsManager.playbackInfo
+    val ttsHighlightState: StateFlow<TtsHighlightState> = ttsManager.highlightState
 
     private val _events = MutableSharedFlow<ReaderEvent>()
     val events: SharedFlow<ReaderEvent> = _events.asSharedFlow()
@@ -151,11 +153,6 @@ class ReaderViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             com.example.logging.AppLogger.d("ReaderViewModel", "updateReadingPosition: id=${chapter.id}, para=$paragraphIndex, scrollY=$scrollY, prog=$scrollPercent")
             repository.updateReadingPosition(chapter.id, paragraphIndex, scrollY)
-            if (scrollPercent >= 0.85f && !chapter.read) {
-                com.example.logging.AppLogger.i("ReaderViewModel", "Auto-marking chapter read at 85%: id=${chapter.id}")
-                repository.setChapterRead(chapter.id, true)
-                _currentChapter.value = _currentChapter.value?.copy(read = true)
-            }
         }
     }
 
@@ -175,11 +172,6 @@ class ReaderViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             com.example.logging.AppLogger.d("ReaderViewModel", "saveCurrentPositionNow: id=${chapter.id}, para=$lastScrollParagraphIndex, scrollY=$lastScrollIndex")
             repository.updateReadingPosition(chapter.id, lastScrollParagraphIndex, lastScrollIndex)
-            if (lastScrollProgress >= 0.85f && !chapter.read) {
-                com.example.logging.AppLogger.i("ReaderViewModel", "Marking chapter read: id=${chapter.id}")
-                repository.setChapterRead(chapter.id, true)
-                _currentChapter.value = _currentChapter.value?.copy(read = true)
-            }
         }
     }
 
@@ -216,6 +208,8 @@ class ReaderViewModel(
         viewModelScope.launch {
             val next = repository.getNextChapter(novelId, chapter.orderIndex)
             if (next != null) {
+                repository.setChapterRead(chapter.id, true)
+                _currentChapter.value = _currentChapter.value?.copy(read = true)
                 val shouldPlay = autoPlay || ttsManager.isPlaying()
                 loadChapterInternal(next.id, autoPlayIfTtsActive = shouldPlay)
             } else {
@@ -263,6 +257,40 @@ class ReaderViewModel(
             ttsManager.seekToChunk(paragraphIndex)
         } else {
             playCurrentChapterTts(startFromChunkIndex = paragraphIndex)
+        }
+    }
+
+    fun playFromSentence(paragraphIndex: Int, startCharOffset: Int) {
+        val chapter = _currentChapter.value ?: return
+        viewModelScope.launch {
+            var content = _renderedContent.value
+            if (content.isBlank()) {
+                content = repository.getRenderedChapterContent(novelId, chapter)
+                _renderedContent.value = content
+            }
+            if (!ttsManager.isPlayingChapter(novelId, chapter.id)) {
+                val currentSettings = settings.value
+                val splitMode = com.example.data.model.ParagraphSplitMode.fromString(currentSettings.splitLongParagraphs)
+                ttsManager.prepareChapter(
+                    novelId = novelId,
+                    chapterId = chapter.id,
+                    chapterTitle = chapter.title,
+                    content = content,
+                    maxChars = splitMode.maxChars,
+                    onChapterComplete = {
+                        viewModelScope.launch {
+                            val latestSettings = settingsDataStore.settingsFlow.first()
+                            if (latestSettings.continueReading) {
+                                nextChapter(autoPlay = true)
+                            } else {
+                                ttsManager.stop()
+                            }
+                        }
+                    }
+                )
+            }
+            ttsManager.playFromSentence(paragraphIndex, startCharOffset)
+            saveCurrentPositionNow()
         }
     }
 

@@ -34,7 +34,7 @@ class SettingsDataStore(private val context: Context) {
         val REPLACEMENTS_ENABLED = booleanPreferencesKey("replacements_enabled")
         val DETAILED_LOGGING = booleanPreferencesKey("detailed_logging")
         val SPLIT_LONG_PARAGRAPHS = stringPreferencesKey("split_long_paragraphs")
-        val OPEN_AT_FIRST_UNREAD = booleanPreferencesKey("open_at_first_unread")
+        val HIDE_READ_CHAPTERS = booleanPreferencesKey("hide_read_chapters")
     }
 
     val settingsFlow: Flow<ReaderSettings> = context.dataStore.data
@@ -59,9 +59,20 @@ class SettingsDataStore(private val context: Context) {
                 continueReading = preferences[PreferencesKeys.CONTINUE_READING] ?: true,
                 replacementsEnabled = preferences[PreferencesKeys.REPLACEMENTS_ENABLED] ?: true,
                 detailedLogging = preferences[PreferencesKeys.DETAILED_LOGGING] ?: false,
-                splitLongParagraphs = preferences[PreferencesKeys.SPLIT_LONG_PARAGRAPHS] ?: "medium",
-                openAtFirstUnread = preferences[PreferencesKeys.OPEN_AT_FIRST_UNREAD] ?: true
+                splitLongParagraphs = preferences[PreferencesKeys.SPLIT_LONG_PARAGRAPHS] ?: "medium"
             )
+        }
+
+    val hideReadChaptersFlow: Flow<Boolean> = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw exception
+            }
+        }
+        .map { preferences ->
+            preferences[PreferencesKeys.HIDE_READ_CHAPTERS] ?: false
         }
 
     suspend fun updateTheme(theme: String) {
@@ -117,8 +128,8 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[PreferencesKeys.SPLIT_LONG_PARAGRAPHS] = mode.lowercase() }
     }
 
-    suspend fun updateOpenAtFirstUnread(enabled: Boolean) {
-        context.dataStore.edit { it[PreferencesKeys.OPEN_AT_FIRST_UNREAD] = enabled }
+    suspend fun updateHideReadChapters(hide: Boolean) {
+        context.dataStore.edit { it[PreferencesKeys.HIDE_READ_CHAPTERS] = hide }
     }
 
     suspend fun saveAllSettings(settings: ReaderSettings) {
@@ -136,7 +147,6 @@ class SettingsDataStore(private val context: Context) {
             prefs[PreferencesKeys.REPLACEMENTS_ENABLED] = settings.replacementsEnabled
             prefs[PreferencesKeys.DETAILED_LOGGING] = settings.detailedLogging
             prefs[PreferencesKeys.SPLIT_LONG_PARAGRAPHS] = settings.splitLongParagraphs
-            prefs[PreferencesKeys.OPEN_AT_FIRST_UNREAD] = settings.openAtFirstUnread
         }
     }
 }

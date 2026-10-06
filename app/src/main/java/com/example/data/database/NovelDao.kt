@@ -7,10 +7,36 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.example.data.database.entities.NovelEntity
+import com.example.data.model.NovelSummary
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface NovelDao {
+
+    @Query("""
+        SELECT
+            n.id AS id,
+            n.title AS title,
+            n.author AS author,
+            n.translator AS translator,
+            n.description AS description,
+            n.coverUri AS coverUri,
+            n.lastChapterId AS lastChapterId,
+            n.replacements AS replacements,
+            n.replacementsEnabled AS replacementsEnabled,
+            n.createdAt AS createdAt,
+            n.updatedAt AS updatedAt,
+            COUNT(c.id) AS totalChapters,
+            COALESCE(SUM(CASE WHEN c.read = 1 THEN 1 ELSE 0 END), 0) AS readChapters,
+            COALESCE(SUM(c.wordCount), 0) AS totalWords,
+            MAX(lc.title) AS lastChapterTitle
+        FROM novels n
+        LEFT JOIN chapters c ON c.novelId = n.id
+        LEFT JOIN chapters lc ON lc.id = n.lastChapterId
+        GROUP BY n.id
+        ORDER BY n.updatedAt DESC
+    """)
+    fun getNovelSummaries(): Flow<List<NovelSummary>>
 
     @Query("SELECT * FROM novels ORDER BY updatedAt DESC")
     fun getAllNovels(): Flow<List<NovelEntity>>

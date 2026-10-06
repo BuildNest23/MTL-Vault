@@ -33,7 +33,8 @@ class MtlVaultApplication : Application() {
         novelRepository = NovelRepository(
             novelDao = database.novelDao(),
             chapterDao = database.chapterDao(),
-            settingsDataStore = settingsDataStore
+            settingsDataStore = settingsDataStore,
+            database = database
         )
         ttsManager = TtsManager(this)
 
@@ -42,10 +43,5 @@ class MtlVaultApplication : Application() {
                 AppLogger.isDetailedLogging = settings.detailedLogging
             }
         }
-    }
-
-    override fun onTerminate() {
-        super.onTerminate()
-        ttsManager.shutdown()
     }
 }

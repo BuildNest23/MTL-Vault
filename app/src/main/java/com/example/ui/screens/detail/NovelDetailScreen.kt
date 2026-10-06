@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Share
@@ -44,6 +46,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,8 +57,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -95,35 +99,16 @@ fun NovelDetailScreen(
     val chapters by viewModel.chapters.collectAsStateWithLifecycle()
     val chaptersLoaded by viewModel.chaptersLoaded.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val hideReadChapters by viewModel.hideReadChapters.collectAsStateWithLifecycle()
     val isSelectionMode by viewModel.isSelectionMode.collectAsStateWithLifecycle()
     val selectedChapterIds by viewModel.selectedChapterIds.collectAsStateWithLifecycle()
     val pendingImportText by viewModel.pendingImportText.collectAsStateWithLifecycle()
 
     var showDeleteNovelDialog by remember { mutableStateOf(false) }
     var chapterToDeleteId by remember { mutableStateOf<String?>(null) }
+    var showDeleteSelectedChaptersDialog by remember { mutableStateOf(false) }
     var showEditMetaDialog by remember { mutableStateOf(false) }
     var showPasteImportDialog by remember { mutableStateOf(false) }
-
-    val isDialogOrPickerActive = showDeleteNovelDialog ||
-            chapterToDeleteId != null ||
-            showEditMetaDialog ||
-            showPasteImportDialog ||
-            pendingImportText != null
-
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    var shouldScrollOnResume by remember { mutableStateOf(false) }
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                shouldScrollOnResume = true
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -214,31 +199,13 @@ fun NovelDetailScreen(
         val progressPercent = if (totalChapters > 0) (readChapters * 100) / totalChapters else 0
         val rulesCount = ReplacementEngine.parseRules(currentNovel.replacements).size
 
-        // Calculate initial scroll index before creating LazyListState so there is ZERO flicker on open
-        val initialScrollIndex = remember {
-            ChapterListScrollHelper.calculateTargetScrollIndex(
-                chapters = chapters,
-                headerItemCount = ChapterListScrollHelper.DEFAULT_HEADER_ITEM_COUNT,
-                enabled = settings.openAtFirstUnread
-            ) ?: 0
-        }
-        val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = initialScrollIndex)
+        val lazyListState = rememberLazyListState()
 
-        // Only re-position on return to screen (ON_RESUME), never on reactive chapter flow updates
-        LaunchedEffect(shouldScrollOnResume) {
-            if (shouldScrollOnResume) {
-                if (!isSelectionMode && !isDialogOrPickerActive && chapters.isNotEmpty()) {
-                    val targetIndex = ChapterListScrollHelper.calculateTargetScrollIndex(
-                        chapters = chapters,
-                        headerItemCount = ChapterListScrollHelper.DEFAULT_HEADER_ITEM_COUNT,
-                        enabled = settings.openAtFirstUnread
-                    )
-                    if (targetIndex != null && targetIndex >= 0) {
-                        lazyListState.scrollToItem(targetIndex, 0)
-                    }
-                }
-                shouldScrollOnResume = false
-            }
+        val visibleChapters = remember(chapters, hideReadChapters) {
+            if (hideReadChapters) chapters.filter { !it.read } else chapters
+        }
+        val originalPositionMap = remember(chapters) {
+            chapters.mapIndexed { idx, ch -> ch.id to (idx + 1) }.toMap()
         }
 
         LazyColumn(
@@ -492,19 +459,54 @@ fun NovelDetailScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Chapters ($totalChapters)",
+                            text = if (hideReadChapters) "Chapters (${visibleChapters.size} of $totalChapters)" else "Chapters ($totalChapters)",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp
                             )
                         )
 
-                        OutlinedButton(
-                            onClick = { viewModel.toggleSelectionMode() },
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.height(36.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Text(if (isSelectionMode) "Done" else "Select", fontSize = 12.sp)
+                            OutlinedButton(
+                                onClick = { viewModel.toggleSelectionMode() },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(36.dp)
+                            ) {
+                                Text(if (isSelectionMode) "Done" else "Select", fontSize = 12.sp)
+                            }
+
+                            var showChapterMenu by remember { mutableStateOf(false) }
+                            Box {
+                                IconButton(
+                                    onClick = { showChapterMenu = true },
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .testTag("detail_chapters_menu_button")
+                                ) {
+                                    Icon(
+                                        Icons.Default.MoreVert,
+                                        contentDescription = "Chapter options",
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showChapterMenu,
+                                    onDismissRequest = { showChapterMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(if (hideReadChapters) "Show read chapters" else "Hide read chapters")
+                                        },
+                                        onClick = {
+                                            showChapterMenu = false
+                                            viewModel.toggleHideReadChapters()
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -531,42 +533,84 @@ fun NovelDetailScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 OutlinedButton(
-                                    onClick = {
-                                        val safeName = currentNovel.title.replace(Regex("[^a-zA-Z0-9.-]"), "_").trim('_')
-                                        pendingExportSelectedOnly = true
-                                        createEpubLauncher.launch("${safeName}_selected_${selectedChapterIds.size}.epub")
-                                    },
+                                    onClick = { viewModel.selectAllChapters(visibleChapters.map { it.id }) },
                                     modifier = Modifier
-                                        .weight(1.3f)
-                                        .height(38.dp),
+                                        .weight(1f)
+                                        .height(38.dp)
+                                        .testTag("detail_select_all_button"),
                                     shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
-                                    enabled = selectedChapterIds.isNotEmpty()
-                                ) {
-                                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(15.dp))
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text("Export EPUB", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                }
-                                OutlinedButton(
-                                    onClick = { viewModel.selectAllChapters() },
-                                    modifier = Modifier
-                                        .weight(0.85f)
-                                        .height(38.dp),
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
                                 ) {
                                     Text("All", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                                 }
                                 OutlinedButton(
                                     onClick = { viewModel.clearChapterSelection() },
                                     modifier = Modifier
-                                        .weight(0.85f)
-                                        .height(38.dp),
+                                        .weight(1f)
+                                        .height(38.dp)
+                                        .testTag("detail_clear_selection_button"),
                                     shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
                                     enabled = selectedChapterIds.isNotEmpty()
                                 ) {
                                     Text("Clear", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val safeName = currentNovel.title.replace(Regex("[^a-zA-Z0-9.-]"), "_").trim('_')
+                                        pendingExportSelectedOnly = true
+                                        createEpubLauncher.launch("${safeName}_selected_${selectedChapterIds.size}.epub")
+                                    },
+                                    modifier = Modifier
+                                        .weight(1.2f)
+                                        .height(38.dp)
+                                        .testTag("detail_export_selected_button"),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                                    enabled = selectedChapterIds.isNotEmpty()
+                                ) {
+                                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Export EPUB", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                }
+                                OutlinedButton(
+                                    onClick = { showDeleteSelectedChaptersDialog = true },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(38.dp)
+                                        .testTag("detail_delete_selected_button"),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                                    enabled = selectedChapterIds.isNotEmpty(),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.error
+                                    ),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (selectedChapterIds.isNotEmpty()) MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                                    )
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(15.dp),
+                                        tint = if (selectedChapterIds.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        "Delete",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        color = if (selectedChapterIds.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
+                                    )
                                 }
                             }
                         }
@@ -599,9 +643,41 @@ fun NovelDetailScreen(
                         }
                     }
                 }
+            } else if (visibleChapters.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "All chapters read",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            TextButton(
+                                onClick = { viewModel.setHideReadChapters(false) },
+                                modifier = Modifier.testTag("show_read_chapters_button")
+                            ) {
+                                Text("Show")
+                            }
+                        }
+                    }
+                }
             } else {
                 itemsIndexed(
-                    items = chapters,
+                    items = visibleChapters,
                     key = { _, ch -> ch.id }
                 ) { index, ch ->
                     val isSelected = selectedChapterIds.contains(ch.id)
@@ -656,8 +732,9 @@ fun NovelDetailScreen(
                                     .background(MaterialTheme.colorScheme.surfaceVariant),
                                 contentAlignment = Alignment.Center
                             ) {
+                                val originalPosition = originalPositionMap[ch.id] ?: (index + 1)
                                 Text(
-                                    text = "${index + 1}",
+                                    text = "$originalPosition",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -790,6 +867,25 @@ fun NovelDetailScreen(
                 viewModel.deleteChapter(cid)
             },
             onDismiss = { chapterToDeleteId = null }
+        )
+    }
+
+    if (showDeleteSelectedChaptersDialog) {
+        val message = if (chapters.isNotEmpty() && selectedChapterIds.size == chapters.size) {
+            "Delete all chapters? This cannot be undone."
+        } else {
+            "Delete ${selectedChapterIds.size} selected chapter(s)? This cannot be undone."
+        }
+        ConfirmDialog(
+            title = "Delete Chapters?",
+            message = message,
+            confirmText = "Delete",
+            isDestructive = true,
+            onConfirm = {
+                showDeleteSelectedChaptersDialog = false
+                viewModel.deleteSelectedChapters()
+            },
+            onDismiss = { showDeleteSelectedChaptersDialog = false }
         )
     }
 

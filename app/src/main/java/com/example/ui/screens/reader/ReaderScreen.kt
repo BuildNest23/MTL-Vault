@@ -11,12 +11,26 @@ import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Dp
+import com.example.tts.SentenceSplitter
+import com.example.tts.SentenceSpan
+import com.example.tts.TtsHighlightState
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,6 +80,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.FlowPreview
@@ -148,20 +163,12 @@ fun ReaderScreen(
         }
     }
 
-    val paragraphChunks = remember(renderedContent, settings.splitLongParagraphs) {
-        val splitMode = com.example.data.model.ParagraphSplitMode.fromString(settings.splitLongParagraphs)
-        com.example.tts.TtsManager.parseParagraphChunks(renderedContent, splitMode.maxChars)
-    }
-
-    val paragraphs = remember(paragraphChunks) {
-        paragraphChunks.map { it.text }
+    val paragraphs = remember(renderedContent) {
+        com.example.tts.TtsManager.parseParagraphs(renderedContent)
     }
 
     // Restore scroll position on chapter change / initial load to saved paragraph
     var hasRestoredPositionForChapter by remember(chapter?.id) { mutableStateOf(false) }
-    LaunchedEffect(settings.splitLongParagraphs) {
-        hasRestoredPositionForChapter = false
-    }
     LaunchedEffect(chapter?.id, paragraphs.size, initialParagraphIndex) {
         val currChapter = chapter
         if (currChapter != null && paragraphs.isNotEmpty() && !hasRestoredPositionForChapter) {
@@ -283,13 +290,50 @@ fun ReaderScreen(
         else -> Triple(ReaderLightBg, ReaderLightText, Color(0xFFFFFFFF))
     }
 
-    val primaryContainer = MaterialTheme.colorScheme.primaryContainer
-    val highlightBg = remember(settings.theme, primaryContainer) {
+    val sentenceHighlightColor = remember(settings.theme) {
         when (settings.theme) {
-            "sepia" -> Color(0xFFECD7B2)
-            "dark" -> Color(0xFF3B352A)
-            "night" -> Color(0xFF282828)
-            else -> primaryContainer.copy(alpha = 0.45f)
+            "sepia" -> Color(0xFFC48B36).copy(alpha = 0.32f) // warm golden amber
+            "dark" -> Color(0xFFFDD835).copy(alpha = 0.28f)  // soft yellow glow on dark
+            "night" -> Color(0xFF4CAF50).copy(alpha = 0.26f) // calm emerald green on black
+            else -> Color(0xFFFFD54F).copy(alpha = 0.40f)    // classic sunny yellow on light
+        }
+    }
+
+    val coroutineScope = rememberCoroutineScope()
+
+    val paragraphSentences = remember(paragraphs) {
+        paragraphs.map { SentenceSplitter.splitIntoSentences(it) }
+    }
+
+    val onSentenceBoundsMeasured: (Int, Float, Float) -> Unit = remember(lazyListState) {
+        { paraIdx, sTop, sBottom ->
+            val targetItemIndex = paraIdx + 1
+            val layoutInfo = lazyListState.layoutInfo
+            val itemInfo = layoutInfo.visibleItemsInfo.find { it.index == targetItemIndex }
+
+            val topMargin = layoutInfo.viewportStartOffset + 140
+            val bottomMargin = layoutInfo.viewportEndOffset - 320
+
+            if (itemInfo == null) {
+                coroutineScope.launch {
+                    lazyListState.animateScrollToItem(targetItemIndex)
+                }
+            } else {
+                val screenTop = itemInfo.offset + sTop
+                val screenBottom = itemInfo.offset + sBottom
+
+                if (screenTop < topMargin) {
+                    val delta = screenTop - topMargin - 40f
+                    coroutineScope.launch {
+                        lazyListState.animateScrollBy(delta)
+                    }
+                } else if (screenBottom > bottomMargin) {
+                    val delta = screenBottom - bottomMargin + 40f
+                    coroutineScope.launch {
+                        lazyListState.animateScrollBy(delta)
+                    }
+                }
+            }
         }
     }
 
@@ -356,83 +400,23 @@ fun ReaderScreen(
                 key = { paraIndex -> "para_$paraIndex" }
             ) { paraIndex ->
                 val paragraph = paragraphs[paraIndex]
-                val isReadingThis = (ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED) &&
-                        ttsInfo.currentChunkIndex == paraIndex &&
-                        ttsInfo.chapterId == chapter?.id
+                val sentences = paragraphSentences.getOrNull(paraIndex) ?: emptyList()
 
-                @OptIn(ExperimentalFoundationApi::class)
-                val paraModifier = if (isReadingThis) {
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(highlightBg)
-                        .border(
-                            width = 2.dp,
-                            color = MaterialTheme.colorScheme.primary,
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                        .combinedClickable(
-                            onClick = { controlsVisible = !controlsVisible },
-                            onDoubleClick = {
-                                requestNotificationPermissionIfNeeded()
-                                viewModel.playFromParagraph(paraIndex)
-                            },
-                            onLongClick = {
-                                requestNotificationPermissionIfNeeded()
-                                viewModel.playFromParagraph(paraIndex)
-                            }
-                        )
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                } else {
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .combinedClickable(
-                            onClick = { controlsVisible = !controlsVisible },
-                            onDoubleClick = {
-                                requestNotificationPermissionIfNeeded()
-                                viewModel.playFromParagraph(paraIndex)
-                            },
-                            onLongClick = {
-                                requestNotificationPermissionIfNeeded()
-                                viewModel.playFromParagraph(paraIndex)
-                            }
-                        )
-                        .padding(horizontal = 4.dp, vertical = 4.dp)
-                }
-
-                val chunk = paragraphChunks.getOrNull(paraIndex)
-                val chunkBottomSpacing = if (chunk != null && !chunk.isLastChunkOfParagraph) 4.dp else 10.dp
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .widthIn(max = settings.maxWidth.dp)
-                        .padding(bottom = chunkBottomSpacing)
-                ) {
-                    Box(modifier = paraModifier) {
-                        Row(
-                            verticalAlignment = Alignment.Top,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            if (isReadingThis) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                    contentDescription = "Currently Reading",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .size(20.dp)
-                                        .padding(top = 2.dp, end = 6.dp)
-                                )
-                            }
-                            Text(
-                                text = paragraph,
-                                style = paragraphTextStyle,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                }
+                ReaderParagraphItem(
+                    paraIndex = paraIndex,
+                    text = paragraph,
+                    sentences = sentences,
+                    highlightStateFlow = viewModel.ttsHighlightState,
+                    highlightColor = sentenceHighlightColor,
+                    textStyle = paragraphTextStyle,
+                    maxWidth = settings.maxWidth.dp,
+                    onClick = { controlsVisible = !controlsVisible },
+                    onDoubleTapSentence = { sentenceStartOffset ->
+                        requestNotificationPermissionIfNeeded()
+                        viewModel.playFromSentence(paraIndex, sentenceStartOffset)
+                    },
+                    onSentenceBoundsMeasured = onSentenceBoundsMeasured
+                )
             }
 
             item(key = "footer_nav") {
@@ -443,38 +427,6 @@ fun ReaderScreen(
                         .padding(top = 40.dp, bottom = 100.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Visual status indicator
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (chapter?.read == true) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            if (chapter?.read == true) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-                        ),
-                        modifier = Modifier.clickable { viewModel.toggleReadStatus() }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (chapter?.read == true) Icons.Default.CheckCircle else Icons.Default.Check,
-                                contentDescription = null,
-                                tint = if (chapter?.read == true) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (chapter?.read == true) "Chapter Completed (Tap to toggle)" else "Mark as Read",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (chapter?.read == true) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -736,6 +688,96 @@ fun ReaderScreen(
                 }
             },
             shape = RoundedCornerShape(16.dp)
+        )
+    }
+}
+
+@Composable
+private fun ReaderParagraphItem(
+    paraIndex: Int,
+    text: String,
+    sentences: List<SentenceSpan>,
+    highlightStateFlow: StateFlow<TtsHighlightState>,
+    highlightColor: Color,
+    textStyle: TextStyle,
+    maxWidth: Dp,
+    onClick: () -> Unit,
+    onDoubleTapSentence: (sentenceStartOffset: Int) -> Unit,
+    onSentenceBoundsMeasured: (paraIndex: Int, sentenceTop: Float, sentenceBottom: Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val highlightRange by remember(paraIndex, highlightStateFlow) {
+        highlightStateFlow.map<TtsHighlightState, Pair<Int, Int>?> { state ->
+            if (state.paragraphIndex == paraIndex) {
+                Pair(state.sentenceStart, state.sentenceEnd)
+            } else {
+                null
+            }
+        }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = null)
+
+    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+
+    val annotatedText = remember(text, highlightRange, highlightColor) {
+        val range = highlightRange
+        if (range == null || range.second <= range.first) {
+            AnnotatedString(text)
+        } else {
+            val builder = AnnotatedString.Builder(text)
+            val start = range.first.coerceIn(0, text.length)
+            val end = range.second.coerceIn(start, text.length)
+            if (end > start) {
+                builder.addStyle(
+                    SpanStyle(background = highlightColor),
+                    start,
+                    end
+                )
+            }
+            builder.toAnnotatedString()
+        }
+    }
+
+    LaunchedEffect(highlightRange, textLayoutResult) {
+        val range = highlightRange ?: return@LaunchedEffect
+        val layout = textLayoutResult ?: return@LaunchedEffect
+        val start = range.first.coerceIn(0, text.length)
+        val end = range.second.coerceIn(start, text.length)
+        if (end > start) {
+            val startLine = layout.getLineForOffset(start)
+            val endLine = layout.getLineForOffset((end - 1).coerceAtLeast(start))
+            val sTop = layout.getLineTop(startLine)
+            val sBottom = layout.getLineBottom(endLine)
+            onSentenceBoundsMeasured(paraIndex, sTop, sBottom)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = maxWidth)
+            .padding(bottom = 12.dp)
+            .pointerInput(text, sentences) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onDoubleTap = { tapOffset ->
+                        val layout = textLayoutResult
+                        if (layout != null) {
+                            val charOffset = layout.getOffsetForPosition(tapOffset)
+                            val sentence = SentenceSplitter.findSentence(sentences, charOffset)
+                            val targetStart = sentence?.start ?: charOffset
+                            onDoubleTapSentence(targetStart)
+                        } else {
+                            onDoubleTapSentence(0)
+                        }
+                    }
+                )
+            }
+    ) {
+        Text(
+            text = annotatedText,
+            style = textStyle,
+            onTextLayout = { textLayoutResult = it },
+            modifier = Modifier.fillMaxWidth()
         )
     }
 }

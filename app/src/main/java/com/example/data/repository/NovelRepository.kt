@@ -17,42 +17,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import androidx.room.withTransaction
+import com.example.data.database.AppDatabase
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class NovelRepository(
     private val novelDao: NovelDao,
     private val chapterDao: ChapterDao,
-    private val settingsDataStore: SettingsDataStore
+    private val settingsDataStore: SettingsDataStore,
+    private val database: AppDatabase? = null
 ) {
 
     fun getNovelSummaries(): Flow<List<NovelSummary>> {
-        return novelDao.getAllNovels().combine(chapterDao.getTotalChapterCount()) { novels, _ ->
-            novels.map { novel ->
-                val total = chapterDao.getChapterCountForNovel(novel.id)
-                val read = chapterDao.getReadChapterCountForNovel(novel.id)
-                val words = chapterDao.getWordCountForNovel(novel.id)
-                val lastChapter = novel.lastChapterId?.let { chapterDao.getChapterByIdSync(it) }
-
-                NovelSummary(
-                    id = novel.id,
-                    title = novel.title,
-                    author = novel.author,
-                    translator = novel.translator,
-                    description = novel.description,
-                    coverUri = novel.coverUri,
-                    lastChapterId = novel.lastChapterId,
-                    replacements = novel.replacements,
-                    replacementsEnabled = novel.replacementsEnabled,
-                    createdAt = novel.createdAt,
-                    updatedAt = novel.updatedAt,
-                    totalChapters = total,
-                    readChapters = read,
-                    totalWords = words,
-                    lastChapterTitle = lastChapter?.title
-                )
-            }
-        }
+        return novelDao.getNovelSummaries()
     }
 
     fun getNovelById(novelId: String): Flow<NovelEntity?> = novelDao.getNovelById(novelId)
@@ -145,9 +123,40 @@ class NovelRepository(
 
     suspend fun deleteChapter(novelId: String, chapterId: String) = withContext(Dispatchers.IO) {
         chapterDao.deleteChapterById(chapterId)
+        ReplacementEngine.invalidateChapter(chapterId)
         val novel = novelDao.getNovelByIdSync(novelId)
         if (novel?.lastChapterId == chapterId) {
             novelDao.updateLastChapter(novelId, null, System.currentTimeMillis())
+        }
+    }
+
+    suspend fun deleteChapters(novelId: String, ids: List<String>) = withContext(Dispatchers.IO) {
+        if (ids.isEmpty()) return@withContext
+        val runBlock: suspend () -> Unit = {
+            // Delete in chunks of 500 ids to avoid SQLite variable limit
+            ids.chunked(500).forEach { chunk ->
+                chapterDao.deleteChaptersByIds(chunk)
+            }
+
+            // Set novel.lastChapterId to null if it was deleted
+            val novel = novelDao.getNovelByIdSync(novelId)
+            val idSet = ids.toSet()
+            if (novel != null && novel.lastChapterId != null && idSet.contains(novel.lastChapterId)) {
+                novelDao.updateLastChapter(novelId, null)
+            }
+
+            // Invalidate ReplacementEngine cache for each deleted chapter
+            ids.forEach { id ->
+                ReplacementEngine.invalidateChapter(id)
+            }
+        }
+
+        if (database != null) {
+            database.withTransaction {
+                runBlock()
+            }
+        } else {
+            runBlock()
         }
     }
 
@@ -265,7 +274,9 @@ class NovelRepository(
         val rawChapters = if (chapterIds == null) {
             chapterDao.getChaptersForNovelSync(novelId)
         } else {
-            chapterDao.getChaptersByIdsSync(chapterIds)
+            chapterIds.chunked(900).flatMap { chunk ->
+                chapterDao.getChaptersByIdsSync(chunk)
+            }.sortedBy { it.orderIndex }
         }
         val settings = settingsDataStore.settingsFlow.first()
         val rules = if (novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()) {
@@ -284,7 +295,9 @@ class NovelRepository(
 
     suspend fun exportChaptersAsText(novelId: String, chapterIds: List<String>): String = withContext(Dispatchers.Default) {
         val novel = novelDao.getNovelByIdSync(novelId) ?: return@withContext ""
-        val chapters = chapterDao.getChaptersByIdsSync(chapterIds)
+        val chapters = chapterIds.chunked(900).flatMap { chunk ->
+            chapterDao.getChaptersByIdsSync(chunk)
+        }.sortedBy { it.orderIndex }
         val settings = settingsDataStore.settingsFlow.first()
         val rules = if (novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()) {
             ReplacementEngine.parseRules(novel.replacements)
@@ -349,12 +362,21 @@ class NovelRepository(
 
     suspend fun restoreFromBackupJson(jsonString: String) = withContext(Dispatchers.IO) {
         val backupData = BackupRestoreManager.parseBackupJson(jsonString)
-        novelDao.deleteAllNovels() // Cascade deletes all chapters
-        for (item in backupData.novels) {
-            novelDao.insertNovel(item.novel)
-            if (item.chapters.isNotEmpty()) {
-                chapterDao.insertChapters(item.chapters)
+        val performDbRestore = suspend {
+            novelDao.deleteAllNovels() // Cascade deletes all chapters
+            for (item in backupData.novels) {
+                novelDao.insertNovel(item.novel)
+                if (item.chapters.isNotEmpty()) {
+                    chapterDao.insertChapters(item.chapters)
+                }
             }
+        }
+        if (database != null) {
+            database.withTransaction {
+                performDbRestore()
+            }
+        } else {
+            performDbRestore()
         }
         backupData.settings?.let {
             settingsDataStore.saveAllSettings(it)

@@ -285,32 +285,6 @@ fun SettingsScreen(
                                 modifier = Modifier.testTag("settings_continue_reading_switch")
                             )
                         }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Open chapter list at first unread chapter",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "Position chapter list directly at the first unread chapter when opening a novel.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = settings.openAtFirstUnread,
-                                onCheckedChange = { viewModel.updateOpenAtFirstUnread(it) },
-                                modifier = Modifier.testTag("settings_open_at_first_unread_switch")
-                            )
-                        }
                     }
                 }
             }

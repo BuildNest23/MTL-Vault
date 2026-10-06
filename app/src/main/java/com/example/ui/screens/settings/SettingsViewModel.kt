@@ -85,12 +85,6 @@ class SettingsViewModel(
         }
     }
 
-    fun updateOpenAtFirstUnread(enabled: Boolean) {
-        viewModelScope.launch {
-            settingsDataStore.updateOpenAtFirstUnread(enabled)
-        }
-    }
-
     fun updateReplacementsEnabled(enabled: Boolean) {
         viewModelScope.launch {
             settingsDataStore.updateReplacementsEnabled(enabled)
