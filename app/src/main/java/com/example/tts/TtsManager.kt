@@ -45,6 +45,69 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         fun parseParagraphChunks(content: String, maxChars: Int = Int.MAX_VALUE): List<ParagraphChunk> {
             return ParagraphSplitter.parseParagraphChunks(content, maxChars)
         }
+
+        /** Sentences shorter than this are merged with the following sentence into one utterance. */
+        const val MIN_SENTENCE_CHARS = 25
+        const val MAX_UTTERANCE_CHARS = 3500
+
+        /**
+         * Builds one utterance per sentence so the reader can highlight the spoken sentence from
+         * onStart, without relying on onRangeStart (which many TTS engines never send).
+         * Very short sentences are merged with the next one; extremely long sentences are split.
+         */
+        internal fun buildSubUtterances(
+            paragraphText: String,
+            sentences: List<SentenceSpan>,
+            startCharOffset: Int
+        ): List<SubUtterance> {
+            if (sentences.isEmpty()) {
+                val remainingText = if (startCharOffset in paragraphText.indices) paragraphText.substring(startCharOffset) else paragraphText
+                return if (remainingText.length <= MAX_UTTERANCE_CHARS) {
+                    listOf(SubUtterance(remainingText, startCharOffset))
+                } else {
+                    remainingText.chunked(MAX_UTTERANCE_CHARS).mapIndexed { i, t ->
+                        SubUtterance(t, startCharOffset + i * MAX_UTTERANCE_CHARS)
+                    }
+                }
+            }
+
+            val eligible = sentences.filter { it.end > startCharOffset }
+            if (eligible.isEmpty()) {
+                val lastChar = paragraphText.takeLast(1)
+                val base = (paragraphText.length - 1).coerceAtLeast(0)
+                return listOf(SubUtterance(if (lastChar.isNotBlank()) lastChar else ".", base))
+            }
+
+            val result = mutableListOf<SubUtterance>()
+            var i = 0
+            while (i < eligible.size) {
+                val spanStart = eligible[i].start
+                var spanEnd = eligible[i].end
+                var j = i
+                // Merge short sentences into the next one (keeps the safety limit)
+                while (spanEnd - spanStart < MIN_SENTENCE_CHARS &&
+                    j + 1 < eligible.size &&
+                    eligible[j + 1].end - spanStart <= MAX_UTTERANCE_CHARS
+                ) {
+                    j++
+                    spanEnd = eligible[j].end
+                }
+
+                if (spanEnd - spanStart > MAX_UTTERANCE_CHARS) {
+                    // A single extremely long sentence: split it, highlighting each part
+                    val longText = paragraphText.substring(spanStart, spanEnd)
+                    var offset = spanStart
+                    for (part in longText.chunked(MAX_UTTERANCE_CHARS)) {
+                        result.add(SubUtterance(part, offset))
+                        offset += part.length
+                    }
+                } else {
+                    result.add(SubUtterance(paragraphText.substring(spanStart, spanEnd), spanStart, spanEnd))
+                }
+                i = j + 1
+            }
+            return result
+        }
     }
 
     private val tag = "TtsManager"
@@ -67,16 +130,21 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     data class SubUtterance(
         val text: String,
-        val baseCharOffset: Int
+        val baseCharOffset: Int,
+        val endCharOffset: Int = baseCharOffset + text.length
     )
 
+    @Volatile
     private var currentSubUtterances: List<SubUtterance> = emptyList()
     @Volatile
     private var currentSubUtteranceIndex = 0
 
+    // Where the current paragraph is being spoken from, so resume() continues from the
+    // sentence that was playing instead of restarting the paragraph.
     @Volatile
-    private var hasReceivedRangeStartForCurrentChunk = false
-    private var fallbackJob: Job? = null
+    private var resumeChunkIndex = -1
+    @Volatile
+    private var resumeCharOffset = 0
 
     @Volatile
     private var currentChunkIndex = 0
@@ -275,21 +343,21 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                         AppLogger.d("TtsManager", "Playback state: PLAYING, chunk=$index")
                     }
 
-                    // Fallback watchdog: if onRangeStart doesn't arrive within ~1.5s, highlight whole paragraph
-                    if (parsed == null || parsed.subIndex == 0) {
-                        hasReceivedRangeStartForCurrentChunk = false
-                        fallbackJob?.cancel()
-                        fallbackJob = mainScope.launch {
-                            delay(1500)
-                            if (!hasReceivedRangeStartForCurrentChunk && isSpeakingActive && currentChunkIndex == index) {
-                                AppLogger.i("TtsManager", "Highlight mode: fallback (paragraph) for chunk $index")
-                                val pText = chunks.getOrNull(index) ?: ""
-                                _highlightState.value = TtsHighlightState(
-                                    paragraphIndex = index,
-                                    sentenceStart = 0,
-                                    sentenceEnd = pText.length,
-                                    isSentenceLevel = false
-                                )
+                    // Highlight the sentence (sub-utterance) that just started speaking.
+                    // This does not depend on onRangeStart, which many engines never send.
+                    if (parsed != null && isSpeakingActive) {
+                        val sub = currentSubUtterances.getOrNull(parsed.subIndex)
+                        if (sub != null && sub.baseCharOffset == parsed.baseOffset) {
+                            resumeChunkIndex = index
+                            resumeCharOffset = sub.baseCharOffset
+                            _highlightState.value = TtsHighlightState(
+                                paragraphIndex = index,
+                                sentenceStart = sub.baseCharOffset,
+                                sentenceEnd = sub.endCharOffset,
+                                isSentenceLevel = true
+                            )
+                            if (AppLogger.isDetailedLogging) {
+                                AppLogger.d("TtsManager", "Highlight sentence: chunk=$index span=${sub.baseCharOffset}-${sub.endCharOffset}")
                             }
                         }
                     }
@@ -451,6 +519,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         currentChapterTitle = chapterTitle
         currentMaxChars = maxChars
         onChapterCompleteCallback = onChapterComplete
+        resumeChunkIndex = -1
+        resumeCharOffset = 0
         chunks = parseParagraphs(content, maxChars)
         chapterSentences = chunks.map { SentenceSplitter.splitIntoSentences(it) }
         _playbackInfo.value = _playbackInfo.value.copy(
@@ -567,12 +637,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     }
 
     private fun handleRangeStart(chunkIndex: Int, baseOffset: Int, start: Int, end: Int) {
-        if (!hasReceivedRangeStartForCurrentChunk) {
-            hasReceivedRangeStartForCurrentChunk = true
-            AppLogger.i("TtsManager", "Highlight mode: range (sentence) for chunk $chunkIndex")
-        }
-        fallbackJob?.cancel()
-
+        // Optional refinement only (engines that send word ranges). Never highlights a whole paragraph.
+        if (!isSpeakingActive) return
         if (chunkIndex < 0 || chunkIndex >= chunks.size) return
         val paragraphText = chunks[chunkIndex]
         val sentences = chapterSentences.getOrNull(chunkIndex) ?: SentenceSplitter.splitIntoSentences(paragraphText)
@@ -596,65 +662,6 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         )
     }
 
-    private fun buildSubUtterances(paragraphText: String, sentences: List<SentenceSpan>, startCharOffset: Int): List<SubUtterance> {
-        if (sentences.isEmpty()) {
-            val remainingText = if (startCharOffset in paragraphText.indices) paragraphText.substring(startCharOffset) else paragraphText
-            return if (remainingText.length <= 3500) {
-                listOf(SubUtterance(remainingText, startCharOffset))
-            } else {
-                remainingText.chunked(3500).mapIndexed { i, s -> SubUtterance(s, startCharOffset + i * 3500) }
-            }
-        }
-
-        val eligibleSentences = sentences.filter { it.end > startCharOffset }
-        if (eligibleSentences.isEmpty()) {
-            val lastChar = paragraphText.takeLast(1)
-            return listOf(SubUtterance(if (lastChar.isNotBlank()) lastChar else ".", (paragraphText.length - 1).coerceAtLeast(0)))
-        }
-
-        val result = mutableListOf<SubUtterance>()
-        var groupStartIdx = 0
-
-        while (groupStartIdx < eligibleSentences.size) {
-            val firstSentence = eligibleSentences[groupStartIdx]
-            val groupStartOffset = if (groupStartIdx == 0 && startCharOffset in firstSentence.start until firstSentence.end) {
-                firstSentence.start
-            } else {
-                firstSentence.start
-            }
-
-            var groupEndIdx = groupStartIdx
-            var groupEndOffset = eligibleSentences[groupEndIdx].end
-
-            while (groupEndIdx + 1 < eligibleSentences.size) {
-                val nextEndOffset = eligibleSentences[groupEndIdx + 1].end
-                if (nextEndOffset - groupStartOffset <= 3500) {
-                    groupEndIdx++
-                    groupEndOffset = nextEndOffset
-                } else {
-                    break
-                }
-            }
-
-            // Single sentence exceeds 3500 chars (extremely long single sentence)
-            if (groupEndOffset - groupStartOffset > 3500 && groupStartIdx == groupEndIdx) {
-                val longText = paragraphText.substring(groupStartOffset, groupEndOffset)
-                val chunksList = longText.chunked(3500)
-                var cOffset = groupStartOffset
-                for (c in chunksList) {
-                    result.add(SubUtterance(c, cOffset))
-                    cOffset += c.length
-                }
-            } else {
-                val text = paragraphText.substring(groupStartOffset, groupEndOffset)
-                result.add(SubUtterance(text, groupStartOffset))
-            }
-
-            groupStartIdx = groupEndIdx + 1
-        }
-        return result
-    }
-
     private fun prepareAndSpeakChunk(index: Int, startCharOffset: Int = 0) {
         if (!isSpeakingActive || chunks.isEmpty()) return
         if (index < 0 || index >= chunks.size) {
@@ -664,6 +671,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
         val paragraphText = chunks[index]
         val sentences = chapterSentences.getOrNull(index) ?: SentenceSplitter.splitIntoSentences(paragraphText)
+        resumeChunkIndex = index
+        resumeCharOffset = startCharOffset
         currentSubUtterances = buildSubUtterances(paragraphText, sentences, startCharOffset)
         currentSubUtteranceIndex = 0
 
@@ -747,7 +756,6 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     fun pause() {
         AppLogger.i("TtsManager", "pause() called")
         isSpeakingActive = false
-        fallbackJob?.cancel()
         try {
             tts?.stop()
         } catch (e: Exception) {
@@ -771,7 +779,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 )
                 AppLogger.i("TtsManager", "Playback state: PLAYING, chunk=$currentChunkIndex")
                 TtsPlaybackService.start(context)
-                prepareAndSpeakChunk(currentChunkIndex, 0)
+                val resumeOffset = if (resumeChunkIndex == currentChunkIndex) resumeCharOffset else 0
+                prepareAndSpeakChunk(currentChunkIndex, resumeOffset)
             } else {
                 AppLogger.w("TtsManager", "resume() failed: audio focus denied")
             }
@@ -781,7 +790,6 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     fun stop(triggerServiceStop: Boolean = true) {
         AppLogger.i("TtsManager", "stop() called (triggerServiceStop=$triggerServiceStop)")
         isSpeakingActive = false
-        fallbackJob?.cancel()
         lastAdvancedChunk = -1
         try {
             tts?.stop()
