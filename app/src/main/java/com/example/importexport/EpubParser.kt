@@ -172,6 +172,13 @@ object EpubParser {
         // Remove <script> and <style>
         text = text.replace(Regex("(?is)<script.*?</script>"), "")
         text = text.replace(Regex("(?is)<style.*?</style>"), "")
+        // Remove <head> (its <title> text would otherwise leak into the body) and comments
+        text = text.replace(Regex("(?is)<head\\b[^>]*>.*?</head>"), "")
+        text = text.replace(Regex("(?is)<title\\b[^>]*>.*?</title>"), "")
+        text = text.replace(Regex("(?s)<!--.*?-->"), "")
+        // Remove the first heading: it is already used as the chapter title and the
+        // reader renders the title separately, so keeping it would duplicate it.
+        text = text.replaceFirst(Regex("(?is)<h[1-2]\\b[^>]*>.*?</h[1-2]>"), "")
 
         // Replace line break tags
         text = text.replace(Regex("(?i)<br\\s*/?>"), "\n")
@@ -187,11 +194,24 @@ object EpubParser {
         val paragraphs = text.lines()
             .map { it.trim() }
             .filter { it.isNotBlank() }
+            .toMutableList()
+
+        val finalTitle = cleanHtmlEntities(title).ifBlank { defaultTitle }
+
+        // Drop leading lines that merely repeat the chapter title (e.g. "<p>Chapter 2448</p>"
+        // or a heading that was not h1/h2), so the title is only shown once by the reader.
+        val normTitle = normalizeForCompare(finalTitle)
+        while (paragraphs.isNotEmpty() && normalizeForCompare(paragraphs.first()) == normTitle) {
+            paragraphs.removeAt(0)
+        }
 
         val cleanContent = paragraphs.joinToString("\n\n")
 
-        return Pair(cleanHtmlEntities(title).ifBlank { defaultTitle }, cleanContent)
+        return Pair(finalTitle, cleanContent)
     }
+
+    private fun normalizeForCompare(s: String): String =
+        s.trim().trimStart('#').trim().replace(Regex("\\s+"), " ").lowercase()
 
     fun cleanHtmlEntities(input: String): String {
         if (!input.contains('&')) return input
