@@ -131,11 +131,11 @@ class TtsPlaybackService : Service() {
                 }
 
                 override fun onSkipToNext() {
-                    ttsManager?.skipToNextChapter()
+                    ttsManager?.nextChunk()
                 }
 
                 override fun onSkipToPrevious() {
-                    ttsManager?.skipToPreviousChapter()
+                    ttsManager?.previousChunk()
                 }
 
                 override fun onStop() {
@@ -192,10 +192,10 @@ class TtsPlaybackService : Service() {
                 ttsManager?.pause()
             }
             ACTION_PREV -> {
-                ttsManager?.skipToPreviousChapter()
+                ttsManager?.previousChunk()
             }
             ACTION_NEXT -> {
-                ttsManager?.skipToNextChapter()
+                ttsManager?.nextChunk()
             }
             ACTION_STOP -> {
                 ttsManager?.stop(triggerServiceStop = false)
