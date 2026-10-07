@@ -286,7 +286,7 @@ object ReplacementEngine {
             val sb = StringBuffer()
             // Regex rules may use $1..$N capture-group references in the replacement if valid for this pattern
             val useGroupRefs = rule.isRegex && GROUP_REF.containsMatchIn(rule.replace) &&
-                isValidReplacement(rule.replace, matcher.groupCount())
+                isValidReplacement(rule.replace, matcher.groupCount(), namedGroups(pattern.pattern()))
 
             while (matcher.find()) {
                 val start = matcher.start()
@@ -326,32 +326,53 @@ object ReplacementEngine {
         }
     }
 
-    private fun isValidReplacement(replacement: String, groupCount: Int): Boolean {
-        var cursor = 0
+    private val NAMED_GROUP = Regex("""\(\?<([a-zA-Z][a-zA-Z0-9]*)>""")
+
+    private fun namedGroups(pattern: String): Set<String> =
+        NAMED_GROUP.findAll(pattern).map { it.groupValues[1] }.toSet()
+
+    /**
+     * Mirrors java.util.regex.Matcher.appendReplacement rules so an invalid reference
+     * falls back to literal text instead of throwing:
+     *  - "\x" escapes the next char
+     *  - "$n": first digit must be <= groupCount; further digits are consumed only while
+     *    the resulting number is still <= groupCount (so "$10" with 1 group = "$1" + "0")
+     *  - "${name}" must name a group that exists in the pattern
+     */
+    private fun isValidReplacement(replacement: String, groupCount: Int, names: Set<String>): Boolean {
+        var i = 0
         val len = replacement.length
-        while (cursor < len) {
-            val c = replacement[cursor]
+        while (i < len) {
+            val c = replacement[i]
             if (c == '\\') {
-                cursor++
-                if (cursor >= len) return false
-                cursor++
+                i++
+                if (i >= len) return false
+                i++
             } else if (c == '$') {
-                cursor++
-                if (cursor >= len) return false
-                val next = replacement[cursor]
-                if (next in '0'..'9') {
-                    var num = 0
-                    while (cursor < len && replacement[cursor] in '0'..'9') {
-                        val digit = replacement[cursor] - '0'
-                        num = num * 10 + digit
-                        cursor++
-                    }
+                i++
+                if (i >= len) return false
+                val next = replacement[i]
+                if (next == '{') {
+                    val close = replacement.indexOf('}', i)
+                    if (close == -1) return false
+                    val name = replacement.substring(i + 1, close)
+                    if (name !in names) return false
+                    i = close + 1
+                } else if (next in '0'..'9') {
+                    var num = next - '0'
                     if (num > groupCount) return false
+                    i++
+                    while (i < len && replacement[i] in '0'..'9') {
+                        val newNum = num * 10 + (replacement[i] - '0')
+                        if (newNum > groupCount) break
+                        num = newNum
+                        i++
+                    }
                 } else {
                     return false
                 }
             } else {
-                cursor++
+                i++
             }
         }
         return true
