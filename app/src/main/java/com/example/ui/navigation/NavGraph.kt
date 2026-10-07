@@ -15,6 +15,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.example.tts.TtsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModel
@@ -64,6 +65,27 @@ fun MtlVaultNavGraph(
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+
+    // Cold start (e.g. app was swiped away from recents while TTS kept playing): instead of the Library,
+    // open the novel's chapter list with the reader for the chapter being spoken on top of it.
+    val restoredOnLaunch = rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (restoredOnLaunch.value) return@LaunchedEffect
+        restoredOnLaunch.value = true
+        if (intent?.getBooleanExtra("OPEN_READER", false) == true) return@LaunchedEffect
+        val info = application.ttsManager.playbackInfo.value
+        val ttsActive = info.state == TtsState.PLAYING || info.state == TtsState.PAUSED
+        val novelId = info.novelId
+        val chapterId = info.chapterId
+        if (ttsActive && !novelId.isNullOrBlank() && !chapterId.isNullOrBlank()) {
+            try {
+                navController.navigate(Screen.NovelDetail.createRoute(novelId))
+                navController.navigate(Screen.Reader.createRoute(novelId, chapterId))
+            } catch (e: Exception) {
+                com.example.logging.AppLogger.w("NavGraph", "Could not restore playing chapter: ${e.message}")
+            }
+        }
+    }
 
     LaunchedEffect(intent) {
         if (intent?.getBooleanExtra("OPEN_READER", false) == true) {
@@ -202,8 +224,10 @@ fun MtlVaultNavGraph(
                         NovelDetailViewModel(novelId, application.novelRepository, application.settingsDataStore)
                     }
                 )
+                val ttsInfo by application.ttsManager.playbackInfo.collectAsState()
                 NovelDetailScreen(
                     viewModel = viewModel,
+                    ttsInfo = ttsInfo,
                     onBackClick = { navController.popBackStack() },
                     onOpenReader = { chapterId ->
                         navController.navigate(Screen.Reader.createRoute(novelId, chapterId, autoPlay = false))

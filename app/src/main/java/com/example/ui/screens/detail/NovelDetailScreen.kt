@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -92,7 +93,8 @@ fun NovelDetailScreen(
     onOpenReader: (String) -> Unit,
     onPlayNovel: (String) -> Unit,
     onOpenEditor: (String?) -> Unit,
-    onOpenReplacements: () -> Unit
+    onOpenReplacements: () -> Unit,
+    ttsInfo: com.example.tts.TtsPlaybackInfo = com.example.tts.TtsPlaybackInfo()
 ) {
     val context = LocalContext.current
     val novel by viewModel.novel.collectAsStateWithLifecycle()
@@ -682,6 +684,10 @@ fun NovelDetailScreen(
                 ) { index, ch ->
                     val isSelected = selectedChapterIds.contains(ch.id)
                     val isCurrent = currentNovel.lastChapterId == ch.id
+                    val ttsActive = ttsInfo.state == com.example.tts.TtsState.PLAYING ||
+                        ttsInfo.state == com.example.tts.TtsState.PAUSED
+                    val isSpeaking = ttsActive && ttsInfo.novelId == currentNovel.id &&
+                        ttsInfo.chapterId == ch.id
 
                     Card(
                         modifier = Modifier
@@ -745,10 +751,22 @@ fun NovelDetailScreen(
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (isSpeaking) {
+                                        Icon(
+                                            imageVector = if (ttsInfo.state == com.example.tts.TtsState.PLAYING)
+                                                Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                                            contentDescription = "Currently being read aloud",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                    }
                                     Text(
                                         text = ch.title,
+                                        color = if (isSpeaking) MaterialTheme.colorScheme.primary
+                                        else androidx.compose.ui.graphics.Color.Unspecified,
                                         style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontWeight = FontWeight.SemiBold
+                                            fontWeight = if (isSpeaking) FontWeight.ExtraBold else FontWeight.SemiBold
                                         ),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
