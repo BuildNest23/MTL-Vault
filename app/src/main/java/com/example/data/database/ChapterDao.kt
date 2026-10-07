@@ -72,6 +72,12 @@ interface ChapterDao {
     @Query("DELETE FROM chapters WHERE id IN (:ids)")
     suspend fun deleteChaptersByIds(ids: List<String>)
 
+    @Query("DELETE FROM chapters WHERE novelId = :novelId")
+    suspend fun deleteChaptersForNovel(novelId: String)
+
+    @Query("DELETE FROM chapters")
+    suspend fun deleteAllChapters()
+
     @Query("SELECT COUNT(*) FROM chapters")
     fun getTotalChapterCount(): Flow<Int>
 

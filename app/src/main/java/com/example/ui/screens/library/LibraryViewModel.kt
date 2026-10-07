@@ -149,6 +149,7 @@ class LibraryViewModel(
                 if (chunks.isEmpty()) {
                     _events.emit(LibraryEvent.ShowToast("No chapters detected."))
                     _pendingImportText.value = null
+                    _targetNovelId.value = null
                     return@launch
                 }
 
@@ -162,10 +163,13 @@ class LibraryViewModel(
                 val importedCount = repository.importChapters(effectiveNovelId, chunks)
                 _events.emit(LibraryEvent.ShowToast("Imported $importedCount chapter(s)."))
                 _pendingImportText.value = null
+                _targetNovelId.value = null
                 _events.emit(LibraryEvent.OpenNovel(effectiveNovelId))
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
+                _pendingImportText.value = null
+                _targetNovelId.value = null
                 _events.emit(LibraryEvent.ShowToast("Import failed: ${e.localizedMessage}"))
             } finally {
                 importRunning = false

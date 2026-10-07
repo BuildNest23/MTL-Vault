@@ -20,7 +20,7 @@ data class ContentCacheKey(
 
 object ReplacementEngine {
 
-    private val GROUP_REF = Regex("\\$(\\d|\\{\\w+\\})")
+    private val GROUP_REF = Regex("""\$(?:\d+|\{\w+\})""")
 
     const val MAX_RULES = 500
     const val MAX_PATTERN_LENGTH = 200
@@ -284,8 +284,9 @@ object ReplacementEngine {
 
             val matcher = pattern.matcher(text)
             val sb = StringBuffer()
-            // Regex rules may use $1 / ${name} capture-group references in the replacement
-            val useGroupRefs = rule.isRegex && GROUP_REF.containsMatchIn(rule.replace)
+            // Regex rules may use $1..$N capture-group references in the replacement if valid for this pattern
+            val useGroupRefs = rule.isRegex && GROUP_REF.containsMatchIn(rule.replace) &&
+                isValidReplacement(rule.replace, matcher.groupCount())
 
             while (matcher.find()) {
                 val start = matcher.start()
@@ -309,12 +310,7 @@ object ReplacementEngine {
 
                 if (shouldReplace) {
                     if (useGroupRefs) {
-                        try {
-                            matcher.appendReplacement(sb, rule.replace)
-                        } catch (e: Exception) {
-                            // Invalid group reference: fall back to the literal text
-                            matcher.appendReplacement(sb, MatcherUtils.quoteReplacement(rule.replace))
-                        }
+                        matcher.appendReplacement(sb, rule.replace)
                     } else {
                         matcher.appendReplacement(sb, MatcherUtils.quoteReplacement(rule.replace))
                     }
@@ -330,6 +326,37 @@ object ReplacementEngine {
         }
     }
 
+    private fun isValidReplacement(replacement: String, groupCount: Int): Boolean {
+        var cursor = 0
+        val len = replacement.length
+        while (cursor < len) {
+            val c = replacement[cursor]
+            if (c == '\\') {
+                cursor++
+                if (cursor >= len) return false
+                cursor++
+            } else if (c == '$') {
+                cursor++
+                if (cursor >= len) return false
+                val next = replacement[cursor]
+                if (next in '0'..'9') {
+                    var num = 0
+                    while (cursor < len && replacement[cursor] in '0'..'9') {
+                        val digit = replacement[cursor] - '0'
+                        num = num * 10 + digit
+                        cursor++
+                    }
+                    if (num > groupCount) return false
+                } else {
+                    return false
+                }
+            } else {
+                cursor++
+            }
+        }
+        return true
+    }
+
     private fun isWordChar(c: Char): Boolean {
         return Character.isLetterOrDigit(c) || c == '_'
     }
@@ -337,14 +364,6 @@ object ReplacementEngine {
 
 private object MatcherUtils {
     fun quoteReplacement(s: String): String {
-        if (!s.contains('\\') && !s.contains('$')) return s
-        val sb = StringBuilder()
-        for (c in s) {
-            if (c == '\\' || c == '$') {
-                sb.append('\\')
-            }
-            sb.append(c)
-        }
-        return sb.toString()
+        return java.util.regex.Matcher.quoteReplacement(s)
     }
 }

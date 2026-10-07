@@ -429,8 +429,6 @@ class TtsPlaybackService : Service() {
             .setDeleteIntent(stopPendingIntent)
             .setOngoing(isPlaying)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .setCustomContentView(customView)
-            .setCustomBigContentView(customBigView)
 
         // Attach system MediaStyle with active MediaSession token
         val sessionToken = mediaSession?.sessionToken
@@ -439,6 +437,9 @@ class TtsPlaybackService : Service() {
                 .setMediaSession(sessionToken)
                 .setShowActionsInCompactView(0, 1, 2)
             builder.style = mediaStyle
+        } else {
+            builder.setCustomContentView(customView)
+            builder.setCustomBigContentView(customBigView)
         }
 
         // Actions: 0 = Prev (⏮), 1 = Play/Pause (⏯), 2 = Next (⏭), 3 = Close (✕)

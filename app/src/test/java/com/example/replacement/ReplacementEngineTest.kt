@@ -176,4 +176,22 @@ class ReplacementEngineTest {
         ReplacementEngine.invalidateCache()
         org.junit.Assert.assertNull("Global cache invalidation should clear all entries", ReplacementEngine.getCachedRenderedContent(chapterId, rulesHash, contentHash))
     }
+
+    @Test
+    fun testRegexGroupReferencesAndLiteralDollars() {
+        // Valid group reference
+        val rule1 = ReplacementRule(find = "(\\w+) gold", replace = "$1 coins", isRegex = true)
+        val res1 = ReplacementEngine.applyRules("He earned 500 gold in total.", listOf(rule1))
+        assertEquals("He earned 500 coins in total.", res1)
+
+        // Literal dollar sign in replacement without valid group index (e.g. $100 price)
+        val rule2 = ReplacementRule(find = "fee", replace = "$100", isRegex = true)
+        val res2 = ReplacementEngine.applyRules("The entrance fee is mandatory.", listOf(rule2))
+        assertEquals("The entrance $100 is mandatory.", res2)
+
+        // Non-regex rule with dollar signs
+        val rule3 = ReplacementRule(find = "cost", replace = "$50", isRegex = false, wholeWord = true)
+        val res3 = ReplacementEngine.applyRules("The cost was high.", listOf(rule3))
+        assertEquals("The $50 was high.", res3)
+    }
 }

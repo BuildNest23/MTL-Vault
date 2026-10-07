@@ -102,13 +102,12 @@ class ReplacementsViewModel(
 
     fun loadSampleFromChapter() {
         viewModelScope.launch {
-            val chapters = repository.getChapterSummaries(novelId)
-            val firstChapter = repository.getNovelByIdSync(novelId)?.let {
-                val list = repository.getChapterByIdSync(it.lastChapterId ?: "")
-                list
-            }
-            if (firstChapter != null && firstChapter.content.isNotBlank()) {
-                _sampleText.value = firstChapter.content.take(1500)
+            val novel = repository.getNovelByIdSync(novelId)
+            val chapter = (novel?.lastChapterId?.let { repository.getChapterByIdSync(it) })
+                ?: repository.getChaptersForNovelSync(novelId).firstOrNull()
+
+            if (chapter != null && chapter.content.isNotBlank()) {
+                _sampleText.value = chapter.content.take(1500)
                 updatePreview()
             } else {
                 _events.emit(ReplacementsEvent.ShowToast("No chapter content to sample from."))

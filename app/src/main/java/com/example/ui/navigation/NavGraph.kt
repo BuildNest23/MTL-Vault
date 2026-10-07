@@ -206,7 +206,8 @@ fun MtlVaultNavGraph(
                     factory = vmFactory {
                         SettingsViewModel(
                             repository = application.novelRepository,
-                            settingsDataStore = application.settingsDataStore
+                            settingsDataStore = application.settingsDataStore,
+                            ttsManager = application.ttsManager
                         )
                     }
                 )

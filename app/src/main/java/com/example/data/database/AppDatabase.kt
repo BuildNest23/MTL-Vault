@@ -53,6 +53,9 @@ abstract class AppDatabase : RoomDatabase() {
                             }
 
                             override fun onOpen(db: SupportSQLiteDatabase) {
+                                super.onOpen(db)
+                                db.setForeignKeyConstraintsEnabled(true)
+                                db.execSQL("PRAGMA foreign_keys = ON;")
                                 AppLogger.i("Room", "Database onOpen, version=${db.version}")
                             }
 

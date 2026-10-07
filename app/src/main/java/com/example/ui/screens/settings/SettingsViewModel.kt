@@ -17,9 +17,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.File
+import com.example.tts.TtsManager
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -33,7 +36,8 @@ sealed class SettingsEvent {
 
 class SettingsViewModel(
     private val repository: NovelRepository,
-    private val settingsDataStore: SettingsDataStore
+    private val settingsDataStore: SettingsDataStore,
+    private val ttsManager: TtsManager? = null
 ) : ViewModel() {
 
     val settings: StateFlow<ReaderSettings> = settingsDataStore.settingsFlow
@@ -68,14 +72,23 @@ class SettingsViewModel(
     }
 
     fun updateTtsRate(rate: Float) {
+        ttsManager?.setSpeechRate(rate)
         viewModelScope.launch {
             settingsDataStore.updateTtsRate(rate)
         }
     }
 
     fun updateTtsPitch(pitch: Float) {
+        ttsManager?.setSpeechPitch(pitch)
         viewModelScope.launch {
             settingsDataStore.updateTtsPitch(pitch)
+        }
+    }
+
+    fun updateTtsVoice(voice: String) {
+        ttsManager?.setVoice(voice)
+        viewModelScope.launch {
+            settingsDataStore.updateTtsVoice(voice)
         }
     }
 
@@ -107,10 +120,13 @@ class SettingsViewModel(
             try {
                 val json = repository.getFullBackupJson()
                 val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                val dir = File(context.cacheDir, "exports")
-                if (!dir.exists()) dir.mkdirs()
-                val file = File(dir, "mtl_vault_backup_$dateStr.json")
-                file.writeText(json, Charsets.UTF_8)
+                val file = withContext(Dispatchers.IO) {
+                    val dir = File(context.cacheDir, "exports")
+                    if (!dir.exists()) dir.mkdirs()
+                    val f = File(dir, "mtl_vault_backup_$dateStr.json")
+                    f.writeText(json, Charsets.UTF_8)
+                    f
+                }
 
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                 val intent = Intent(Intent.ACTION_SEND).apply {
@@ -138,11 +154,13 @@ class SettingsViewModel(
             val startTime = System.currentTimeMillis()
             AppLogger.i("Backup", "importBackup started with uri=$uri")
             try {
-                val inputStream = context.contentResolver.openInputStream(uri)
-                val reader = BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8))
-                val json = reader.readText()
-                reader.close()
-                inputStream?.close()
+                val json = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                        BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8)).use { reader ->
+                            reader.readText()
+                        }
+                    } ?: ""
+                }
 
                 if (json.isBlank()) {
                     AppLogger.w("Backup", "importBackup failed: backup file is blank")
@@ -165,7 +183,9 @@ class SettingsViewModel(
         viewModelScope.launch {
             try {
                 AppLogger.i("Diagnostics", "Building log file to share")
-                val logFile = AppLogger.buildExportFile(context, settings.value)
+                val logFile = withContext(Dispatchers.IO) {
+                    AppLogger.buildExportFile(context, settings.value)
+                }
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", logFile)
                 val intent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
@@ -190,10 +210,12 @@ class SettingsViewModel(
         viewModelScope.launch {
             try {
                 AppLogger.i("Diagnostics", "Saving diagnostic log to selected file")
-                val fullText = AppLogger.buildFullExportText(context, settings.value)
-                context.contentResolver.openOutputStream(uri)?.use { os ->
-                    os.write(fullText.toByteArray(Charsets.UTF_8))
-                    os.flush()
+                withContext(Dispatchers.IO) {
+                    val fullText = AppLogger.buildFullExportText(context, settings.value)
+                    context.contentResolver.openOutputStream(uri)?.use { os ->
+                        os.write(fullText.toByteArray(Charsets.UTF_8))
+                        os.flush()
+                    }
                 }
                 AppLogger.i("Diagnostics", "Diagnostic log saved successfully")
                 _events.emit(SettingsEvent.ShowToast("Log saved successfully."))

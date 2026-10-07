@@ -39,6 +39,8 @@ class NovelRepository(
 
     fun getChapterSummaries(novelId: String): Flow<List<ChapterSummary>> = chapterDao.getChapterSummaries(novelId)
 
+    suspend fun getChaptersForNovelSync(novelId: String): List<ChapterEntity> = chapterDao.getChaptersForNovelSync(novelId)
+
     fun getChapterById(chapterId: String): Flow<ChapterEntity?> = chapterDao.getChapterById(chapterId)
 
     suspend fun getChapterByIdSync(chapterId: String): ChapterEntity? = chapterDao.getChapterByIdSync(chapterId)
@@ -91,7 +93,17 @@ class NovelRepository(
     }
 
     suspend fun deleteNovel(novelId: String) = withContext(Dispatchers.IO) {
-        novelDao.deleteNovelById(novelId)
+        val runBlock: suspend () -> Unit = {
+            val chapters = chapterDao.getChaptersForNovelSync(novelId)
+            chapterDao.deleteChaptersForNovel(novelId)
+            novelDao.deleteNovelById(novelId)
+            chapters.forEach { ReplacementEngine.invalidateChapter(it.id) }
+        }
+        if (database != null) {
+            database.withTransaction { runBlock() }
+        } else {
+            runBlock()
+        }
     }
 
     suspend fun addChapter(novelId: String, title: String, content: String): String = withContext(Dispatchers.IO) {
@@ -131,11 +143,20 @@ class NovelRepository(
     }
 
     suspend fun deleteChapter(novelId: String, chapterId: String) = withContext(Dispatchers.IO) {
-        chapterDao.deleteChapterById(chapterId)
-        ReplacementEngine.invalidateChapter(chapterId)
-        val novel = novelDao.getNovelByIdSync(novelId)
-        if (novel?.lastChapterId == chapterId) {
-            novelDao.updateLastChapter(novelId, null, System.currentTimeMillis())
+        val runBlock: suspend () -> Unit = {
+            chapterDao.deleteChapterById(chapterId)
+            ReplacementEngine.invalidateChapter(chapterId)
+            val novel = novelDao.getNovelByIdSync(novelId)
+            if (novel?.lastChapterId == chapterId) {
+                val remaining = chapterDao.getChaptersForNovelSync(novelId)
+                val fallbackChapterId = remaining.lastOrNull()?.id
+                novelDao.updateLastChapter(novelId, fallbackChapterId, System.currentTimeMillis())
+            }
+        }
+        if (database != null) {
+            database.withTransaction { runBlock() }
+        } else {
+            runBlock()
         }
     }
 
@@ -147,11 +168,13 @@ class NovelRepository(
                 chapterDao.deleteChaptersByIds(chunk)
             }
 
-            // Set novel.lastChapterId to null if it was deleted
+            // Set novel.lastChapterId to fallback remaining chapter if it was deleted
             val novel = novelDao.getNovelByIdSync(novelId)
             val idSet = ids.toSet()
             if (novel != null && novel.lastChapterId != null && idSet.contains(novel.lastChapterId)) {
-                novelDao.updateLastChapter(novelId, null)
+                val remaining = chapterDao.getChaptersForNovelSync(novelId)
+                val fallbackChapterId = remaining.lastOrNull()?.id
+                novelDao.updateLastChapter(novelId, fallbackChapterId)
             }
 
             // Invalidate ReplacementEngine cache for each deleted chapter
@@ -372,7 +395,8 @@ class NovelRepository(
     suspend fun restoreFromBackupJson(jsonString: String) = withContext(Dispatchers.IO) {
         val backupData = BackupRestoreManager.parseBackupJson(jsonString)
         val performDbRestore = suspend {
-            novelDao.deleteAllNovels() // Cascade deletes all chapters
+            chapterDao.deleteAllChapters()
+            novelDao.deleteAllNovels()
             for (item in backupData.novels) {
                 novelDao.insertNovel(item.novel)
                 if (item.chapters.isNotEmpty()) {
@@ -401,7 +425,15 @@ class NovelRepository(
     }
 
     suspend fun resetAllData() = withContext(Dispatchers.IO) {
-        novelDao.deleteAllNovels()
+        val runBlock: suspend () -> Unit = {
+            chapterDao.deleteAllChapters()
+            novelDao.deleteAllNovels()
+        }
+        if (database != null) {
+            database.withTransaction { runBlock() }
+        } else {
+            runBlock()
+        }
         ReplacementEngine.invalidateCache()
     }
 

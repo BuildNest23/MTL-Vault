@@ -42,16 +42,15 @@ object EpubParser {
         val zipFile = ZipFile(file)
         try {
             // 1. Locate OPF file path from META-INF/container.xml
-            val containerEntry = zipFile.getEntry("META-INF/container.xml")
-                ?: zipFile.entries().asSequence().find { it.name.equals("META-INF/container.xml", ignoreCase = true) }
+            val containerEntry = findZipEntry(zipFile, "META-INF/container.xml")
                 ?: throw IllegalArgumentException("Invalid EPUB: META-INF/container.xml not found")
 
             val containerXml = zipFile.getInputStream(containerEntry).bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val opfPath = extractOpfPath(containerXml)
+            val rawOpfPath = extractOpfPath(containerXml)
                 ?: throw IllegalArgumentException("Invalid EPUB: could not find rootfile in container.xml")
+            val opfPath = normalizePath(rawOpfPath)
 
-            val opfEntry = zipFile.getEntry(opfPath)
-                ?: zipFile.entries().asSequence().find { it.name.equals(opfPath, ignoreCase = true) }
+            val opfEntry = findZipEntry(zipFile, opfPath)
                 ?: throw IllegalArgumentException("Invalid EPUB: OPF file not found at $opfPath")
 
             val opfXml = zipFile.getInputStream(opfEntry).bufferedReader(Charsets.UTF_8).use { it.readText() }
@@ -64,12 +63,14 @@ object EpubParser {
 
             // 3. Parse manifest (id -> href)
             val manifestMap = mutableMapOf<String, String>()
+            val manifestOrder = mutableListOf<String>()
             val itemMatcher = Pattern.compile("<item\\s+[^>]*?id=[\"']([^\"']+)[\"'][^>]*?href=[\"']([^\"']+)[\"'][^>]*?>", Pattern.CASE_INSENSITIVE).matcher(opfXml)
             while (itemMatcher.find()) {
                 val id = itemMatcher.group(1)
                 val href = itemMatcher.group(2)
                 if (id != null && href != null) {
                     manifestMap[id] = href
+                    if (!manifestOrder.contains(href)) manifestOrder.add(href)
                 }
             }
             // Also check reversed attribute order href then id
@@ -79,6 +80,7 @@ object EpubParser {
                 val id = itemMatcherRev.group(2)
                 if (id != null && href != null && !manifestMap.containsKey(id)) {
                     manifestMap[id] = href
+                    if (!manifestOrder.contains(href)) manifestOrder.add(href)
                 }
             }
 
@@ -92,40 +94,71 @@ object EpubParser {
                 }
             }
 
-            // 5. Read chapters in spine order
+            // 5. Read chapters in spine order (or fallback to manifest HTML items if spine is empty/missing)
+            val targetHrefs = if (spineIds.isNotEmpty()) {
+                spineIds.mapNotNull { manifestMap[it] }
+            } else {
+                manifestOrder.filter { href ->
+                    val lower = href.lowercase()
+                    (lower.endsWith(".xhtml") || lower.endsWith(".html") || lower.endsWith(".htm")) &&
+                        !lower.contains("toc.") && !lower.contains("nav.")
+                }.ifEmpty {
+                    manifestOrder.filter { href ->
+                        val lower = href.lowercase()
+                        lower.endsWith(".xhtml") || lower.endsWith(".html") || lower.endsWith(".htm")
+                    }
+                }
+            }
+
             val chapters = mutableListOf<SplitChapterResult>()
             var chapterIndex = 1
 
-            for (idref in spineIds) {
-                val rawHref = manifestMap[idref] ?: continue
-                // Clean anchor tags if href contains '#'
-                val cleanHref = if (rawHref.contains('#')) rawHref.substringBefore('#') else rawHref
-                // Escape "+" first: URLDecoder would otherwise turn it into a space (file names are not form data)
-                val decodedHref = try {
-                    java.net.URLDecoder.decode(cleanHref.replace("+", "%2B"), "UTF-8")
-                } catch (e: IllegalArgumentException) {
-                    cleanHref
-                }
-                val fullPath = normalizePath(opfDir + decodedHref)
+            fun processHrefs(hrefs: List<String>) {
+                for (rawHref in hrefs) {
+                    // Clean anchor tags if href contains '#'
+                    val cleanHref = if (rawHref.contains('#')) rawHref.substringBefore('#') else rawHref
+                    // Escape "+" first: URLDecoder would otherwise turn it into a space (file names are not form data)
+                    val decodedHref = try {
+                        java.net.URLDecoder.decode(cleanHref.replace("+", "%2B"), "UTF-8")
+                    } catch (e: IllegalArgumentException) {
+                        cleanHref
+                    }
+                    val fullPath = normalizePath(opfDir + decodedHref)
 
-                val entry = zipFile.getEntry(fullPath)
-                    ?: zipFile.entries().asSequence().find { it.name.equals(fullPath, ignoreCase = true) }
-                    ?: continue
+                    val entry = findZipEntry(zipFile, fullPath) ?: continue
 
-                val html = zipFile.getInputStream(entry).bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val (chapterTitle, chapterText) = parseHtmlChapter(html, "Chapter $chapterIndex")
+                    val html = zipFile.getInputStream(entry).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val (chapterTitle, chapterText) = parseHtmlChapter(html, "Chapter $chapterIndex")
 
-                if (chapterText.isNotBlank()) {
-                    val finalTitle = if (chapterTitle.isNotBlank()) chapterTitle else "Chapter $chapterIndex"
-                    chapters.add(
-                        SplitChapterResult(
-                            title = finalTitle,
-                            content = chapterText,
-                            wordCount = ChapterSplitter.countWords(chapterText)
+                    if (chapterText.isNotBlank()) {
+                        val finalTitle = if (chapterTitle.isNotBlank()) chapterTitle else "Chapter $chapterIndex"
+                        chapters.add(
+                            SplitChapterResult(
+                                title = finalTitle,
+                                content = chapterText,
+                                wordCount = ChapterSplitter.countWords(chapterText)
+                            )
                         )
-                    )
-                    chapterIndex++
+                        chapterIndex++
+                    }
                 }
+            }
+
+            processHrefs(targetHrefs)
+
+            // If spine was non-empty but failed to find chapters, fallback to manifest items
+            if (chapters.isEmpty() && spineIds.isNotEmpty()) {
+                val fallbackHrefs = manifestOrder.filter { href ->
+                    val lower = href.lowercase()
+                    (lower.endsWith(".xhtml") || lower.endsWith(".html") || lower.endsWith(".htm")) &&
+                        !lower.contains("toc.") && !lower.contains("nav.")
+                }.ifEmpty {
+                    manifestOrder.filter { href ->
+                        val lower = href.lowercase()
+                        lower.endsWith(".xhtml") || lower.endsWith(".html") || lower.endsWith(".htm")
+                    }
+                }
+                processHrefs(fallbackHrefs)
             }
 
             return EpubBook(
@@ -252,8 +285,19 @@ object EpubParser {
         return String(Character.toChars(cp))
     }
 
+    private fun findZipEntry(zipFile: ZipFile, targetPath: String): ZipEntry? {
+        val normTarget = normalizePath(targetPath)
+        zipFile.getEntry(normTarget)?.let { return it }
+        zipFile.getEntry(normTarget.replace('/', '\\'))?.let { return it }
+        return zipFile.entries().asSequence().find { entry ->
+            val normName = normalizePath(entry.name)
+            normName.equals(normTarget, ignoreCase = true)
+        }
+    }
+
     private fun normalizePath(path: String): String {
-        val parts = path.split('/')
+        val normalized = path.replace('\\', '/')
+        val parts = normalized.split('/')
         val stack = mutableListOf<String>()
         for (part in parts) {
             when (part) {

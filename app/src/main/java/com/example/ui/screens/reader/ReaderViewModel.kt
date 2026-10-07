@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 sealed class ReaderEvent {
@@ -93,6 +94,8 @@ class ReaderViewModel(
     // Dispatchers.Main.immediate, so loadChapter() can touch those properties before they are
     // initialized if this block is placed earlier (caused a NullPointerException on opening a chapter).
 
+    private var loadChapterJob: Job? = null
+
     init {
         loadChapter(initialChapterId)
         ttsManager.onNextChapterRequested = onNextRequested
@@ -112,7 +115,8 @@ class ReaderViewModel(
 
     fun loadChapter(chapterId: String) {
         saveCurrentPositionNow()
-        viewModelScope.launch {
+        loadChapterJob?.cancel()
+        loadChapterJob = viewModelScope.launch {
             loadChapterInternal(chapterId, autoPlayIfTtsActive = false)
         }
     }
@@ -221,7 +225,8 @@ class ReaderViewModel(
         val chapter = _currentChapter.value ?: return
         saveCurrentPositionNow()
         com.example.logging.AppLogger.i("ReaderViewModel", "prevChapter requested: currentOrder=${chapter.orderIndex}, autoPlay=$autoPlay")
-        viewModelScope.launch {
+        loadChapterJob?.cancel()
+        loadChapterJob = viewModelScope.launch {
             val prev = repository.getPrevChapter(novelId, chapter.orderIndex)
             if (prev != null) {
                 val shouldPlay = autoPlay || ttsManager.isPlaying()
@@ -237,7 +242,8 @@ class ReaderViewModel(
         val chapter = _currentChapter.value ?: return
         saveCurrentPositionNow()
         com.example.logging.AppLogger.i("ReaderViewModel", "nextChapter requested: currentOrder=${chapter.orderIndex}, autoPlay=$autoPlay")
-        viewModelScope.launch {
+        loadChapterJob?.cancel()
+        loadChapterJob = viewModelScope.launch {
             val next = repository.getNextChapter(novelId, chapter.orderIndex)
             if (next != null) {
                 repository.setChapterRead(chapter.id, true)

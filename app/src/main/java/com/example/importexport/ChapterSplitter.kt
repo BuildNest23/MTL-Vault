@@ -83,8 +83,14 @@ object ChapterSplitter {
             if (matcher.matches()) {
                 if (currentLines.isNotEmpty() || currentTitle.isNotEmpty()) {
                     val content = currentLines.joinToString("\n").trim()
-                    val title = if (currentTitle.isNotBlank()) currentTitle else "$fallbackTitlePrefix${results.size + startingIndex}"
-                    results.add(SplitChapterResult(title, content, countWords(content)))
+                    val title = if (currentTitle.isNotBlank()) {
+                        currentTitle
+                    } else {
+                        "Prologue"
+                    }
+                    if (content.isNotBlank() || title.isNotBlank()) {
+                        results.add(SplitChapterResult(title, content, countWords(content)))
+                    }
                     currentLines.clear()
                 }
                 currentTitle = line.trim()
@@ -96,8 +102,16 @@ object ChapterSplitter {
 
         if (currentLines.isNotEmpty() || currentTitle.isNotEmpty()) {
             val content = currentLines.joinToString("\n").trim()
-            val title = if (currentTitle.isNotBlank()) currentTitle else "$fallbackTitlePrefix${results.size + startingIndex}"
-            results.add(SplitChapterResult(title, content, countWords(content)))
+            val title = if (currentTitle.isNotBlank()) {
+                currentTitle
+            } else if (results.isEmpty()) {
+                "Prologue"
+            } else {
+                "$fallbackTitlePrefix${results.size + startingIndex}"
+            }
+            if (content.isNotBlank() || title.isNotBlank()) {
+                results.add(SplitChapterResult(title, content, countWords(content)))
+            }
         }
 
         return if (foundAny) results else emptyList()

@@ -41,6 +41,11 @@ class MtlVaultApplication : Application() {
         CoroutineScope(Dispatchers.Default).launch {
             settingsDataStore.settingsFlow.collect { settings ->
                 AppLogger.isDetailedLogging = settings.detailedLogging
+                ttsManager.setSpeechRate(settings.ttsRate)
+                ttsManager.setSpeechPitch(settings.ttsPitch)
+                if (settings.ttsVoice.isNotBlank()) {
+                    ttsManager.setVoice(settings.ttsVoice)
+                }
             }
         }
     }
