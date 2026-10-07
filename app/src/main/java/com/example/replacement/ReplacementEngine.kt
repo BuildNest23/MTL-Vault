@@ -20,6 +20,8 @@ data class ContentCacheKey(
 
 object ReplacementEngine {
 
+    private val GROUP_REF = Regex("\\$(\\d|\\{\\w+\\})")
+
     const val MAX_RULES = 500
     const val MAX_PATTERN_LENGTH = 200
     const val LARGE_TEXT_THRESHOLD = 500_000
@@ -158,11 +160,27 @@ object ReplacementEngine {
             // Find separator: "=>", "->", or "="
             var sepIdx = -1
             var sepLen = 0
-            for (sep in listOf("=>", "->", "=")) {
-                val idx = rest.indexOf(sep)
-                if (idx >= 0 && (sepIdx == -1 || idx < sepIdx)) {
-                    sepIdx = idx
-                    sepLen = sep.length
+            if (isRegex) {
+                // Regex rules may contain "=" inside lookarounds such as (?=...) or (?<=...)
+                var k = 0
+                while (k < rest.length) {
+                    if (rest.startsWith("=>", k) || rest.startsWith("->", k)) {
+                        sepIdx = k; sepLen = 2; break
+                    }
+                    if (rest[k] == '=') {
+                        val isLookaround = (k >= 2 && rest.regionMatches(k - 2, "(?", 0, 2)) ||
+                            (k >= 3 && rest.regionMatches(k - 3, "(?<", 0, 3))
+                        if (!isLookaround) { sepIdx = k; sepLen = 1; break }
+                    }
+                    k++
+                }
+            } else {
+                for (sep in listOf("=>", "->", "=")) {
+                    val idx = rest.indexOf(sep)
+                    if (idx >= 0 && (sepIdx == -1 || idx < sepIdx)) {
+                        sepIdx = idx
+                        sepLen = sep.length
+                    }
                 }
             }
 
@@ -266,6 +284,8 @@ object ReplacementEngine {
 
             val matcher = pattern.matcher(text)
             val sb = StringBuffer()
+            // Regex rules may use $1 / ${name} capture-group references in the replacement
+            val useGroupRefs = rule.isRegex && GROUP_REF.containsMatchIn(rule.replace)
 
             while (matcher.find()) {
                 val start = matcher.start()
@@ -288,7 +308,16 @@ object ReplacementEngine {
                 }
 
                 if (shouldReplace) {
-                    matcher.appendReplacement(sb, MatcherUtils.quoteReplacement(rule.replace))
+                    if (useGroupRefs) {
+                        try {
+                            matcher.appendReplacement(sb, rule.replace)
+                        } catch (e: Exception) {
+                            // Invalid group reference: fall back to the literal text
+                            matcher.appendReplacement(sb, MatcherUtils.quoteReplacement(rule.replace))
+                        }
+                    } else {
+                        matcher.appendReplacement(sb, MatcherUtils.quoteReplacement(rule.replace))
+                    }
                 } else {
                     matcher.appendReplacement(sb, MatcherUtils.quoteReplacement(matcher.group()))
                 }

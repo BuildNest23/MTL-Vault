@@ -5,10 +5,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
+import com.example.tts.TtsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -34,10 +45,21 @@ import com.example.ui.screens.settings.SettingsViewModel
 
 import android.content.Intent
 
+/**
+ * ViewModels are now owned by each navigation back-stack entry (not by `remember`), so they survive
+ * rotation / theme changes and are cleared (onCleared) when their screen is really removed.
+ */
+private fun <T : ViewModel> vmFactory(build: () -> T): ViewModelProvider.Factory =
+    object : ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <V : ViewModel> create(modelClass: Class<V>): V = build() as V
+    }
+
 @Composable
 fun MtlVaultNavGraph(
     application: MtlVaultApplication,
-    intent: Intent? = null
+    intent: Intent? = null,
+    onIntentConsumed: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -48,11 +70,60 @@ fun MtlVaultNavGraph(
             val novelId = intent.getStringExtra("NOVEL_ID")
             val chapterId = intent.getStringExtra("CHAPTER_ID")
             if (!novelId.isNullOrBlank() && !chapterId.isNullOrBlank()) {
-                navController.navigate(Screen.Reader.createRoute(novelId, chapterId)) {
-                    popUpTo(Screen.Library.route)
+                // If that very chapter is already on screen there is nothing to open
+                // (the reader scrolls itself to the spoken paragraph on resume)
+                val entry = navController.currentBackStackEntry
+                val alreadyThere = entry?.destination?.route == Screen.Reader.route &&
+                    entry.arguments?.getString("chapterId") == chapterId
+                if (!alreadyThere) {
+                    navController.navigate(Screen.Reader.createRoute(novelId, chapterId)) {
+                        popUpTo(Screen.Library.route)
+                        launchSingleTop = true
+                    }
                 }
             }
+            // Handle a notification intent only once (otherwise a rotation re-opens the reader)
+            onIntentConsumed()
         }
+    }
+
+    // If the reader was on screen when the app went to the background and TTS is still active, make sure
+    // the reader (not the novel page) is what the user sees when they come back.
+    val readerWasOpenWhenLeft = rememberSaveable { mutableStateOf(false) }
+    val lifecycleOwner = LocalContext.current as? LifecycleOwner
+    DisposableEffect(lifecycleOwner, navController) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    readerWasOpenWhenLeft.value =
+                        navController.currentBackStackEntry?.destination?.route == Screen.Reader.route
+                }
+                Lifecycle.Event.ON_START -> {
+                    if (readerWasOpenWhenLeft.value) {
+                        readerWasOpenWhenLeft.value = false
+                        val entry = navController.currentBackStackEntry
+                        val info = application.ttsManager.playbackInfo.value
+                        val ttsActive = info.state == TtsState.PLAYING || info.state == TtsState.PAUSED
+                        val novelId = info.novelId
+                        val chapterId = info.chapterId
+                        if (entry != null && entry.destination.route != Screen.Reader.route &&
+                            ttsActive && novelId != null && chapterId != null
+                        ) {
+                            try {
+                                navController.navigate(Screen.Reader.createRoute(novelId, chapterId)) {
+                                    launchSingleTop = true
+                                }
+                            } catch (e: Exception) {
+                                com.example.logging.AppLogger.w("NavGraph", "Could not restore reader: ${e.message}")
+                            }
+                        }
+                    }
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
     }
 
     val showBottomBar = currentRoute in listOf(
@@ -88,9 +159,9 @@ fun MtlVaultNavGraph(
         ) {
             // Tab 1: Library
             composable(Screen.Library.route) {
-                val viewModel = remember {
-                    LibraryViewModel(application.novelRepository)
-                }
+                val viewModel: LibraryViewModel = viewModel(
+                    factory = vmFactory { LibraryViewModel(application.novelRepository) }
+                )
                 LibraryScreen(
                     viewModel = viewModel,
                     onOpenNovel = { novelId ->
@@ -101,20 +172,22 @@ fun MtlVaultNavGraph(
 
             // Tab 2: Stats
             composable(Screen.Stats.route) {
-                val viewModel = remember {
-                    StatsViewModel(application.novelRepository)
-                }
+                val viewModel: StatsViewModel = viewModel(
+                    factory = vmFactory { StatsViewModel(application.novelRepository) }
+                )
                 StatsScreen(viewModel = viewModel)
             }
 
             // Tab 3: Settings
             composable(Screen.Settings.route) {
-                val viewModel = remember {
-                    SettingsViewModel(
-                        repository = application.novelRepository,
-                        settingsDataStore = application.settingsDataStore
-                    )
-                }
+                val viewModel: SettingsViewModel = viewModel(
+                    factory = vmFactory {
+                        SettingsViewModel(
+                            repository = application.novelRepository,
+                            settingsDataStore = application.settingsDataStore
+                        )
+                    }
+                )
                 SettingsScreen(viewModel = viewModel)
             }
 
@@ -124,9 +197,11 @@ fun MtlVaultNavGraph(
                 arguments = listOf(navArgument("novelId") { type = NavType.StringType })
             ) { backStackEntry ->
                 val novelId = backStackEntry.arguments?.getString("novelId") ?: ""
-                val viewModel = remember(novelId) {
-                    NovelDetailViewModel(novelId, application.novelRepository, application.settingsDataStore)
-                }
+                val viewModel: NovelDetailViewModel = viewModel(
+                    factory = vmFactory {
+                        NovelDetailViewModel(novelId, application.novelRepository, application.settingsDataStore)
+                    }
+                )
                 NovelDetailScreen(
                     viewModel = viewModel,
                     onBackClick = { navController.popBackStack() },
@@ -160,16 +235,18 @@ fun MtlVaultNavGraph(
                 val novelId = backStackEntry.arguments?.getString("novelId") ?: ""
                 val chapterId = backStackEntry.arguments?.getString("chapterId") ?: ""
                 val autoPlay = backStackEntry.arguments?.getBoolean("autoPlay") ?: false
-                val viewModel = remember(novelId, chapterId, autoPlay) {
-                    ReaderViewModel(
-                        novelId = novelId,
-                        initialChapterId = chapterId,
-                        repository = application.novelRepository,
-                        settingsDataStore = application.settingsDataStore,
-                        ttsManager = application.ttsManager,
-                        autoPlayTtsOnLoad = autoPlay
-                    )
-                }
+                val viewModel: ReaderViewModel = viewModel(
+                    factory = vmFactory {
+                        ReaderViewModel(
+                            novelId = novelId,
+                            initialChapterId = chapterId,
+                            repository = application.novelRepository,
+                            settingsDataStore = application.settingsDataStore,
+                            ttsManager = application.ttsManager,
+                            autoPlayTtsOnLoad = autoPlay
+                        )
+                    }
+                )
                 ReaderScreen(
                     viewModel = viewModel,
                     onBackClick = { navController.popBackStack() },
@@ -193,13 +270,15 @@ fun MtlVaultNavGraph(
             ) { backStackEntry ->
                 val novelId = backStackEntry.arguments?.getString("novelId") ?: ""
                 val chapterId = backStackEntry.arguments?.getString("chapterId")
-                val viewModel = remember(novelId, chapterId) {
-                    ChapterEditorViewModel(
-                        novelId = novelId,
-                        chapterId = chapterId,
-                        repository = application.novelRepository
-                    )
-                }
+                val viewModel: ChapterEditorViewModel = viewModel(
+                    factory = vmFactory {
+                        ChapterEditorViewModel(
+                            novelId = novelId,
+                            chapterId = chapterId,
+                            repository = application.novelRepository
+                        )
+                    }
+                )
                 ChapterEditorScreen(
                     viewModel = viewModel,
                     onBackClick = { navController.popBackStack() }
@@ -214,9 +293,9 @@ fun MtlVaultNavGraph(
                 )
             ) { backStackEntry ->
                 val novelId = backStackEntry.arguments?.getString("novelId") ?: ""
-                val viewModel = remember(novelId) {
-                    ReplacementsViewModel(novelId, application.novelRepository)
-                }
+                val viewModel: ReplacementsViewModel = viewModel(
+                    factory = vmFactory { ReplacementsViewModel(novelId, application.novelRepository) }
+                )
                 ReplacementsScreen(
                     viewModel = viewModel,
                     onBackClick = { navController.popBackStack() }

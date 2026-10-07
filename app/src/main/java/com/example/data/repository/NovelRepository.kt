@@ -97,7 +97,7 @@ class NovelRepository(
     suspend fun addChapter(novelId: String, title: String, content: String): String = withContext(Dispatchers.IO) {
         val maxOrder = chapterDao.getMaxOrderIndex(novelId) ?: -1
         val newOrder = maxOrder + 1
-        val id = "c_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().take(4)
+        val id = "c_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().take(8)
         val wc = ChapterSplitter.countWords(content)
         val chapter = ChapterEntity(
             id = id,
@@ -110,7 +110,7 @@ class NovelRepository(
             updatedAt = System.currentTimeMillis()
         )
         chapterDao.insertChapter(chapter)
-        novelDao.updateLastChapter(novelId, id, System.currentTimeMillis())
+        touchNovelKeepingProgress(novelId, id)
         id
     }
 
@@ -118,7 +118,16 @@ class NovelRepository(
         com.example.replacement.ReplacementEngine.invalidateChapter(chapter.id)
         val wc = ChapterSplitter.countWords(chapter.content)
         chapterDao.updateChapter(chapter.copy(wordCount = wc, updatedAt = System.currentTimeMillis()))
-        novelDao.updateLastChapter(chapter.novelId, chapter.id, System.currentTimeMillis())
+        touchNovelKeepingProgress(chapter.novelId, chapter.id)
+    }
+
+    /**
+     * Bumps the novel's updatedAt without moving the "continue reading" pointer.
+     * Only sets lastChapterId when the novel has none yet.
+     */
+    private suspend fun touchNovelKeepingProgress(novelId: String, fallbackChapterId: String?) {
+        val existing = novelDao.getNovelByIdSync(novelId)?.lastChapterId
+        novelDao.updateLastChapter(novelId, existing ?: fallbackChapterId, System.currentTimeMillis())
     }
 
     suspend fun deleteChapter(novelId: String, chapterId: String) = withContext(Dispatchers.IO) {
@@ -195,7 +204,7 @@ class NovelRepository(
             var nextOrder = currentMaxOrder + 1
             val entities = chapters.map { ch ->
                 ChapterEntity(
-                    id = "c_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().take(6),
+                    id = "c_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().take(12),
                     novelId = novelId,
                     orderIndex = nextOrder++,
                     title = ch.title,
@@ -206,7 +215,7 @@ class NovelRepository(
                 )
             }
             chapterDao.insertChapters(entities)
-            novelDao.updateLastChapter(novelId, entities.lastOrNull()?.id, System.currentTimeMillis())
+            touchNovelKeepingProgress(novelId, entities.firstOrNull()?.id)
             val duration = System.currentTimeMillis() - startTime
             com.example.logging.AppLogger.i("Import", "importChapters finished: inserted=${entities.size} in ${duration}ms")
             entities.size
@@ -263,10 +272,16 @@ class NovelRepository(
         }
 
         for (ch in chapters) {
-            val content = if (rules.isNotEmpty()) ReplacementEngine.applyRules(ch.content, rules) else ch.content
+            val content = renderForExport(ch.content, rules)
             sb.append(ch.title).append("\n\n").append(content).append("\n\n\n")
         }
         sb.toString()
+    }
+
+    /** Same normalisation the reader uses, then the replacement rules (if any). */
+    private fun renderForExport(raw: String, rules: List<com.example.replacement.ReplacementRule>): String {
+        val normalized = ReplacementEngine.normalizeText(raw)
+        return if (rules.isNotEmpty()) ReplacementEngine.applyRules(normalized, rules) else normalized
     }
 
     suspend fun getRenderedChapters(novelId: String, chapterIds: List<String>? = null): List<ChapterEntity> = withContext(Dispatchers.Default) {
@@ -284,13 +299,7 @@ class NovelRepository(
         } else {
             emptyList()
         }
-        if (rules.isEmpty()) {
-            rawChapters
-        } else {
-            rawChapters.map { ch ->
-                ch.copy(content = ReplacementEngine.applyRules(ch.content, rules))
-            }
-        }
+        rawChapters.map { ch -> ch.copy(content = renderForExport(ch.content, rules)) }
     }
 
     suspend fun exportChaptersAsText(novelId: String, chapterIds: List<String>): String = withContext(Dispatchers.Default) {
@@ -307,15 +316,16 @@ class NovelRepository(
 
         val sb = StringBuilder()
         for (ch in chapters) {
-            val content = if (rules.isNotEmpty()) ReplacementEngine.applyRules(ch.content, rules) else ch.content
+            val content = renderForExport(ch.content, rules)
             sb.append(ch.title).append("\n\n").append(content).append("\n\n\n")
         }
         sb.toString()
     }
 
     suspend fun getNextDefaultChapterTitle(novelId: String): String = withContext(Dispatchers.IO) {
-        val chapters = chapterDao.getChaptersForNovelSync(novelId)
-        if (chapters.isEmpty()) {
+        // Titles only: avoids loading the full text of every chapter just to pick a number
+        val titles = chapterDao.getChapterTitles(novelId)
+        if (titles.isEmpty()) {
             return@withContext "Chapter 1"
         }
 
@@ -323,8 +333,7 @@ class NovelRepository(
         val chapterPattern = Regex("""(?i)\b(?:chapter|ch|chapitre|capitulo|capítulo|ch\.)\s*(\d+)\b""")
         val fallbackNumberPattern = Regex("""\b(\d+)\b""")
 
-        for (chapter in chapters) {
-            val title = chapter.title
+        for (title in titles) {
             val chapterMatch = chapterPattern.find(title)
             val num = if (chapterMatch != null) {
                 chapterMatch.groupValues[1].toIntOrNull()
@@ -344,7 +353,7 @@ class NovelRepository(
         val nextNum = if (highestNumber != null) {
             highestNumber + 1
         } else {
-            chapters.size + 1
+            titles.size + 1
         }
 
         "Chapter $nextNum"
@@ -378,13 +387,22 @@ class NovelRepository(
         } else {
             performDbRestore()
         }
-        backupData.settings?.let {
-            settingsDataStore.saveAllSettings(it)
+        ReplacementEngine.invalidateCache()
+        backupData.settings?.let { restored ->
+            // Backups don't store these two, so keep the device's current values
+            val current = settingsDataStore.settingsFlow.first()
+            settingsDataStore.saveAllSettings(
+                restored.copy(
+                    ttsEngine = if (restored.ttsEngine.isBlank()) current.ttsEngine else restored.ttsEngine,
+                    detailedLogging = current.detailedLogging
+                )
+            )
         }
     }
 
     suspend fun resetAllData() = withContext(Dispatchers.IO) {
         novelDao.deleteAllNovels()
+        ReplacementEngine.invalidateCache()
     }
 
     // Stats

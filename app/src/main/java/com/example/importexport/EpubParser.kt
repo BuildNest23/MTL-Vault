@@ -100,7 +100,12 @@ object EpubParser {
                 val rawHref = manifestMap[idref] ?: continue
                 // Clean anchor tags if href contains '#'
                 val cleanHref = if (rawHref.contains('#')) rawHref.substringBefore('#') else rawHref
-                val decodedHref = java.net.URLDecoder.decode(cleanHref, "UTF-8")
+                // Escape "+" first: URLDecoder would otherwise turn it into a space (file names are not form data)
+                val decodedHref = try {
+                    java.net.URLDecoder.decode(cleanHref.replace("+", "%2B"), "UTF-8")
+                } catch (e: IllegalArgumentException) {
+                    cleanHref
+                }
                 val fullPath = normalizePath(opfDir + decodedHref)
 
                 val entry = zipFile.getEntry(fullPath)
@@ -215,9 +220,9 @@ object EpubParser {
 
     fun cleanHtmlEntities(input: String): String {
         if (!input.contains('&')) return input
+        // "&amp;" is decoded LAST so "&amp;lt;" correctly becomes "&lt;" and not "<".
         var s = input
             .replace("&nbsp;", " ")
-            .replace("&amp;", "&")
             .replace("&lt;", "<")
             .replace("&gt;", ">")
             .replace("&quot;", "\"")
@@ -231,23 +236,20 @@ object EpubParser {
             .replace("&ldquo;", "“")
             .replace("&rdquo;", "”")
 
-        // Numeric entities &#123;
+        // Numeric entities &#123; (code points, so emoji above U+FFFF work)
         s = s.replace(Regex("&#(\\d+);")) { match ->
-            try {
-                match.groupValues[1].toInt().toChar().toString()
-            } catch (e: Exception) {
-                match.value
-            }
+            codePointToString(match.groupValues[1].toIntOrNull(), match.value)
         }
         // Hex entities &#x1F;
-        s = s.replace(Regex("&#x([0-9a-fA-F]+);")) { match ->
-            try {
-                match.groupValues[1].toInt(16).toChar().toString()
-            } catch (e: Exception) {
-                match.value
-            }
+        s = s.replace(Regex("&#[xX]([0-9a-fA-F]+);")) { match ->
+            codePointToString(match.groupValues[1].toIntOrNull(16), match.value)
         }
-        return s
+        return s.replace("&amp;", "&")
+    }
+
+    private fun codePointToString(cp: Int?, original: String): String {
+        if (cp == null || cp == 0 || !Character.isValidCodePoint(cp) || cp in 0xD800..0xDFFF) return original
+        return String(Character.toChars(cp))
     }
 
     private fun normalizePath(path: String): String {

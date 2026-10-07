@@ -40,7 +40,15 @@ class MainActivity : ComponentActivity() {
         val app = application as MtlVaultApplication
         setContent {
             MtlVaultTheme {
-                MtlVaultNavGraph(application = app, intent = currentIntentState.value)
+                MtlVaultNavGraph(
+                    application = app,
+                    intent = currentIntentState.value,
+                    onIntentConsumed = {
+                        // Drop the flag so rotation / recreation doesn't re-open the reader
+                        intent?.removeExtra("OPEN_READER")
+                        currentIntentState.value = null
+                    }
+                )
             }
         }
     }

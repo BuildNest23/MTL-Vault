@@ -42,6 +42,9 @@ interface ChapterDao {
     @Query("SELECT * FROM chapters WHERE novelId = :novelId AND orderIndex < :currentOrder ORDER BY orderIndex DESC LIMIT 1")
     suspend fun getPrevChapter(novelId: String, currentOrder: Int): ChapterEntity?
 
+    @Query("SELECT title FROM chapters WHERE novelId = :novelId")
+    suspend fun getChapterTitles(novelId: String): List<String>
+
     @Query("SELECT MAX(orderIndex) FROM chapters WHERE novelId = :novelId")
     suspend fun getMaxOrderIndex(novelId: String): Int?
 

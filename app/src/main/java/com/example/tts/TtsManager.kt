@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -464,9 +465,25 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 if (onChapterCompleteCallback != null) {
                     onChapterCompleteCallback?.invoke()
                 } else {
-                    skipToNextChapter()
+                    continueInBackground()
                 }
             }
+        }
+    }
+
+    /**
+     * Used when no screen is listening for "chapter finished" (reader closed, TTS running in the
+     * background). Honours the user's "continue reading" setting like the reader screen does.
+     */
+    private fun continueInBackground() {
+        val app = context.applicationContext as? MtlVaultApplication
+        mainScope.launch {
+            val continueReading = try {
+                app?.settingsDataStore?.settingsFlow?.first()?.continueReading ?: true
+            } catch (e: Exception) {
+                true
+            }
+            if (continueReading) skipToNextChapter() else stop()
         }
     }
 

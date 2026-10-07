@@ -282,7 +282,15 @@ $paragraphs
 
     fun sanitizeXmlText(text: String): String {
         val sb = StringBuilder(text.length)
-        for (ch in text) {
+        var i = 0
+        while (i < text.length) {
+            val ch = text[i]
+            // Keep valid surrogate pairs (emoji, rare CJK); drop only lone surrogates
+            if (Character.isHighSurrogate(ch) && i + 1 < text.length && Character.isLowSurrogate(text[i + 1])) {
+                sb.append(ch).append(text[i + 1])
+                i += 2
+                continue
+            }
             val code = ch.code
             // Valid XML 1.0 characters
             if (code == 0x9 || code == 0xA || code == 0xD ||
@@ -291,6 +299,7 @@ $paragraphs
             ) {
                 sb.append(ch)
             }
+            i++
         }
         return sb.toString()
     }

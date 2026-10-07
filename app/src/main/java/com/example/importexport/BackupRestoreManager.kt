@@ -98,7 +98,10 @@ object BackupRestoreManager {
         val dataObj = when {
             root.has("data") -> root.getJSONObject("data")
             root.has("novels") -> root
-            else -> root
+            else -> throw IllegalArgumentException("This file is not a valid MTL Vault backup (no \"novels\" list found).")
+        }
+        if (!dataObj.has("novels")) {
+            throw IllegalArgumentException("This file is not a valid MTL Vault backup (no \"novels\" list found).")
         }
 
         val novelsList = mutableListOf<NovelWithChaptersBackup>()

@@ -17,7 +17,9 @@ object ChapterSplitter {
     }
 
     private val AUTO_CHAPTER_REGEX = Pattern.compile(
-        "^\\s*(chapter|chapitre|capítulo|capitulo|अध्याय|باب|第|ch\\.?|c\\.?)\\s*([0-9]+[a-zA-Z]?|[IVXLC]+|[一二三四五六七八九十百千万]+)?.*$",
+        // Heading words must stand alone ("Chapter 5", "Chapter One"); the short forms "ch"/"c."
+        // need a number. This stops ordinary lines such as "Carefully he..." from matching.
+        "^\\s*(?:(?:chapter|chapitre|capítulo|capitulo|अध्याय|باب)(?![\\p{L}\\p{M}\\p{N}]).*|(?:ch\\.?|c\\.)\\s*[0-9]+[a-zA-Z]?\\b.*|第.*)$",
         Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
     )
 

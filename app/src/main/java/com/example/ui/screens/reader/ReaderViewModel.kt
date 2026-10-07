@@ -75,14 +75,28 @@ class ReaderViewModel(
     private var lastSavedIndex: Int = -1
     private var lastSavedProgress: Float = -1f
 
+    // Single instances so onCleared() can tell whether the TtsManager callbacks are still ours.
+    private val onTtsChapterComplete: () -> Unit = {
+        viewModelScope.launch {
+            val latestSettings = settingsDataStore.settingsFlow.first()
+            if (latestSettings.continueReading) {
+                nextChapter(autoPlay = true)
+            } else {
+                ttsManager.stop()
+            }
+        }
+    }
+    private val onNextRequested: () -> Unit = { nextChapter(autoPlay = true) }
+    private val onPrevRequested: () -> Unit = { prevChapter(autoPlay = true) }
+
     // IMPORTANT: keep this init block AFTER every property declaration above. viewModelScope runs on
     // Dispatchers.Main.immediate, so loadChapter() can touch those properties before they are
     // initialized if this block is placed earlier (caused a NullPointerException on opening a chapter).
 
     init {
         loadChapter(initialChapterId)
-        ttsManager.onNextChapterRequested = { nextChapter(autoPlay = true) }
-        ttsManager.onPrevChapterRequested = { prevChapter(autoPlay = true) }
+        ttsManager.onNextChapterRequested = onNextRequested
+        ttsManager.onPrevChapterRequested = onPrevRequested
 
         viewModelScope.launch {
             var previousSplitMode: String? = null
@@ -117,14 +131,27 @@ class ReaderViewModel(
         lastScrollProgress = 0f
 
         val chapter = repository.getChapterByIdSync(chapterId)
-        _currentChapter.value = chapter
         if (chapter != null) {
-            val targetParagraph = chapter.readingParagraphIndex.coerceAtLeast(0)
-            _initialParagraphIndex.value = targetParagraph
+            val ttsInfo = ttsManager.playbackInfo.value
+            val ttsActiveHere = ttsInfo.chapterId == chapter.id &&
+                (ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED)
+            val targetParagraph = when {
+                // TTS auto-advanced into this chapter and starts at paragraph 0: open at the top instead of
+                // an old saved position (that caused "opens in the middle, then scrolls up")
+                autoPlayIfTtsActive -> 0
+                // Reader re-opened (e.g. from the media notification) while TTS is reading this chapter:
+                // open on the paragraph being spoken, not on the last manually saved position
+                ttsActiveHere -> ttsInfo.currentChunkIndex.coerceAtLeast(0)
+                else -> chapter.readingParagraphIndex.coerceAtLeast(0)
+            }
+            // Render FIRST, then publish content + chapter together. Publishing the chapter before its
+            // text made the screen restore the scroll position against the previous chapter's paragraphs.
+            val rendered = repository.getRenderedChapterContent(novelId, chapter)
             lastScrollParagraphIndex = targetParagraph
             lastScrollIndex = targetParagraph
-            val rendered = repository.getRenderedChapterContent(novelId, chapter)
+            _initialParagraphIndex.value = targetParagraph
             _renderedContent.value = rendered
+            _currentChapter.value = chapter
             repository.updateLastChapter(novelId, chapter.id)
             com.example.logging.AppLogger.i("ReaderViewModel", "Chapter loaded: id=${chapter.id}, targetParagraph=$targetParagraph, renderedLen=${rendered.length}")
 
@@ -135,6 +162,7 @@ class ReaderViewModel(
                 playCurrentChapterTts(startFromChunkIndex = targetParagraph)
             }
         } else {
+            _currentChapter.value = null
             com.example.logging.AppLogger.w("ReaderViewModel", "loadChapter: chapter not found for id=$chapterId")
         }
     }
@@ -281,16 +309,7 @@ class ReaderViewModel(
                     chapterTitle = chapter.title,
                     content = content,
                     maxChars = splitMode.maxChars,
-                    onChapterComplete = {
-                        viewModelScope.launch {
-                            val latestSettings = settingsDataStore.settingsFlow.first()
-                            if (latestSettings.continueReading) {
-                                nextChapter(autoPlay = true)
-                            } else {
-                                ttsManager.stop()
-                            }
-                        }
-                    }
+                    onChapterComplete = onTtsChapterComplete
                 )
             }
             ttsManager.playFromSentence(paragraphIndex, startCharOffset)
@@ -328,16 +347,7 @@ class ReaderViewModel(
             content = content,
             startFromChunkIndex = startFromChunkIndex,
             maxChars = splitMode.maxChars,
-            onChapterComplete = {
-                viewModelScope.launch {
-                    val latestSettings = settingsDataStore.settingsFlow.first()
-                    if (latestSettings.continueReading) {
-                        nextChapter(autoPlay = true)
-                    } else {
-                        ttsManager.stop()
-                    }
-                }
-            }
+            onChapterComplete = onTtsChapterComplete
         )
     }
 
@@ -420,7 +430,10 @@ class ReaderViewModel(
     override fun onCleared() {
         super.onCleared()
         saveCurrentPositionNow()
-        ttsManager.onNextChapterRequested = null
-        ttsManager.onPrevChapterRequested = null
+        // Only detach callbacks that still belong to this ViewModel (a newer reader may own them now).
+        // Leaving the chapter-complete callback empty lets TtsManager keep going in the background.
+        if (ttsManager.onNextChapterRequested === onNextRequested) ttsManager.onNextChapterRequested = null
+        if (ttsManager.onPrevChapterRequested === onPrevRequested) ttsManager.onPrevChapterRequested = null
+        if (ttsManager.onChapterCompleteCallback === onTtsChapterComplete) ttsManager.onChapterCompleteCallback = null
     }
 }

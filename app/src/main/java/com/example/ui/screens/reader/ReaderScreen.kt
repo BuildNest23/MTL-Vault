@@ -84,6 +84,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
+import kotlinx.coroutines.Job
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.FlowPreview
@@ -256,8 +262,14 @@ fun ReaderScreen(
         }
     }
 
-    // --- Auto-scroll vs. user-scroll arbitration -------------------------------------------
-    // Our own TTS auto-scrolls must never fight the user's finger/fling, which caused jitter.
+    // --- Auto-scroll: ONE controller ---------------------------------------------------------
+    // Before, the per-paragraph scroll and the per-sentence scroll could run at the same time and cancel
+    // each other mid-animation (jitter), and nothing stopped them when the finger touched the list.
+    // Now: only one auto-scroll job exists at a time, a touch cancels it immediately, and long jumps
+    // (e.g. a new chapter opening far from the spoken paragraph) are instant instead of animated.
+    val coroutineScope = rememberCoroutineScope()
+    val autoScrollJob = remember { arrayOfNulls<Job>(1) }
+    val autoScrollToken = remember { longArrayOf(0L) }
     val autoScrollRunning = remember { booleanArrayOf(false) }
     val lastUserScrollAt = remember { longArrayOf(0L) }
     val lastAutoScrollEnd = remember { longArrayOf(0L) }
@@ -274,39 +286,77 @@ fun ReaderScreen(
             android.os.SystemClock.uptimeMillis() - lastUserScrollAt[0] < 2500L
     }
 
-    // Auto-scroll when TTS moves to a new paragraph, ensuring partially visible paragraphs also scroll up
-    LaunchedEffect(ttsInfo.currentChunkIndex, ttsInfo.chapterId, chapter?.id) {
-        if (userIsScrolling()) return@LaunchedEffect
-        if ((ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED) &&
-            ttsInfo.chapterId == chapter?.id
-        ) {
-            val targetItemIndex = ttsInfo.currentChunkIndex + 1
-            if (targetItemIndex in 0 until (paragraphs.size + 2)) {
-                val layoutInfo = lazyListState.layoutInfo
-                val visibleItem = layoutInfo.visibleItemsInfo.find { it.index == targetItemIndex }
-
-                // Comfortable viewport margins accounting for top bar and bottom reader controls
-                val topMargin = layoutInfo.viewportStartOffset + 50
-                val bottomMargin = layoutInfo.viewportEndOffset - 140
-                val availableHeight = bottomMargin - topMargin
-
-                val isComfortablyVisible = visibleItem != null &&
-                        if (visibleItem.size > availableHeight) {
-                            visibleItem.offset in (topMargin - 40)..(topMargin + 100)
-                        } else {
-                            visibleItem.offset >= topMargin && (visibleItem.offset + visibleItem.size) <= bottomMargin
-                        }
-
-                if (!isComfortablyVisible) {
-                    autoScrollRunning[0] = true
-                    try {
-                        lazyListState.animateScrollToItem(targetItemIndex)
-                    } finally {
-                        autoScrollRunning[0] = false; lastAutoScrollEnd[0] = android.os.SystemClock.uptimeMillis()
+    val runAutoScroll: (suspend () -> Unit) -> Unit = remember(lazyListState) {
+        { block ->
+            autoScrollJob[0]?.cancel()
+            autoScrollToken[0] = autoScrollToken[0] + 1
+            val token = autoScrollToken[0]
+            autoScrollJob[0] = coroutineScope.launch {
+                autoScrollRunning[0] = true
+                try {
+                    block()
+                } finally {
+                    if (autoScrollToken[0] == token) {
+                        autoScrollRunning[0] = false
+                        lastAutoScrollEnd[0] = android.os.SystemClock.uptimeMillis()
                     }
                 }
             }
         }
+    }
+
+    val jumpToItem: suspend (Int) -> Unit = { item ->
+        val first = lazyListState.firstVisibleItemIndex
+        if (kotlin.math.abs(first - item) > 3) {
+            lazyListState.scrollToItem(item) // far away: instant, no long animated sweep
+        } else {
+            lazyListState.animateScrollToItem(item)
+        }
+    }
+
+    // Auto-scroll when TTS moves to a paragraph that is NOT on screen. Paragraphs that are already
+    // visible are kept comfortably in view by the per-sentence scroller (onSentenceBoundsMeasured).
+    LaunchedEffect(ttsInfo.currentChunkIndex, ttsInfo.chapterId, chapter?.id) {
+        if (userIsScrolling()) return@LaunchedEffect
+        val active = ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED
+        if (active && ttsInfo.chapterId == chapter?.id) {
+            val targetItemIndex = ttsInfo.currentChunkIndex + 1
+            if (targetItemIndex in 0 until (paragraphs.size + 2)) {
+                val layoutInfo = lazyListState.layoutInfo
+                val visibleItem = layoutInfo.visibleItemsInfo.find { it.index == targetItemIndex }
+                val needsScroll = if (visibleItem == null) {
+                    true
+                } else if (ttsInfo.state == com.example.tts.TtsState.PAUSED) {
+                    // While paused no sentence highlight drives scrolling, so keep the old comfort check
+                    val topMargin = layoutInfo.viewportStartOffset + 50
+                    val bottomMargin = layoutInfo.viewportEndOffset - 140
+                    visibleItem.offset < topMargin || (visibleItem.offset + visibleItem.size) > bottomMargin
+                } else {
+                    false
+                }
+                if (needsScroll) runAutoScroll { jumpToItem(targetItemIndex) }
+            }
+        }
+    }
+
+    // Coming back to the app (e.g. via the media notification): jump straight to the spoken paragraph
+    val ttsInfoNow = rememberUpdatedState(ttsInfo)
+    val chapterIdNow = rememberUpdatedState(chapter?.id)
+    val paragraphCountNow = rememberUpdatedState(paragraphs.size)
+    val activityOwner = context as? LifecycleOwner
+    DisposableEffect(activityOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val info = ttsInfoNow.value
+                val active = info.state == com.example.tts.TtsState.PLAYING || info.state == com.example.tts.TtsState.PAUSED
+                if (active && info.chapterId == chapterIdNow.value && paragraphCountNow.value > 0) {
+                    val target = (info.currentChunkIndex + 1).coerceIn(0, paragraphCountNow.value + 1)
+                    coroutineScope.launch { lazyListState.scrollToItem(target) }
+                }
+            }
+        }
+        activityOwner?.lifecycle?.addObserver(observer)
+        onDispose { activityOwner?.lifecycle?.removeObserver(observer) }
     }
 
     // Determine colors based on reading theme
@@ -326,8 +376,6 @@ fun ReaderScreen(
         }
     }
 
-    val coroutineScope = rememberCoroutineScope()
-
     val paragraphSentences = remember(paragraphs) {
         paragraphs.map { SentenceSplitter.splitIntoSentences(it) }
     }
@@ -343,25 +391,20 @@ fun ReaderScreen(
             val bottomMargin = layoutInfo.viewportEndOffset - 320
 
             if (itemInfo == null) {
-                coroutineScope.launch {
-                    autoScrollRunning[0] = true
-                    try { lazyListState.animateScrollToItem(targetItemIndex) } finally { autoScrollRunning[0] = false; lastAutoScrollEnd[0] = android.os.SystemClock.uptimeMillis() }
-                }
+                runAutoScroll { jumpToItem(targetItemIndex) }
             } else {
                 val screenTop = itemInfo.offset + sTop
                 val screenBottom = itemInfo.offset + sBottom
 
                 if (screenTop < topMargin) {
                     val delta = screenTop - topMargin - 40f
-                    coroutineScope.launch {
-                        autoScrollRunning[0] = true
-                        try { lazyListState.animateScrollBy(delta) } finally { autoScrollRunning[0] = false; lastAutoScrollEnd[0] = android.os.SystemClock.uptimeMillis() }
+                    runAutoScroll {
+                        lazyListState.animateScrollBy(delta, androidx.compose.animation.core.tween(300))
                     }
                 } else if (screenBottom > bottomMargin) {
                     val delta = screenBottom - bottomMargin + 40f
-                    coroutineScope.launch {
-                        autoScrollRunning[0] = true
-                        try { lazyListState.animateScrollBy(delta) } finally { autoScrollRunning[0] = false; lastAutoScrollEnd[0] = android.os.SystemClock.uptimeMillis() }
+                    runAutoScroll {
+                        lazyListState.animateScrollBy(delta, androidx.compose.animation.core.tween(300))
                     }
                 }
             }
@@ -400,6 +443,18 @@ fun ReaderScreen(
             state = lazyListState,
             modifier = Modifier
                 .fillMaxSize()
+                // A finger on the list cancels any running auto-scroll right away (no fighting the user)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.changes.any { it.pressed }) {
+                                lastUserScrollAt[0] = android.os.SystemClock.uptimeMillis()
+                                autoScrollJob[0]?.cancel()
+                            }
+                        }
+                    }
+                }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null

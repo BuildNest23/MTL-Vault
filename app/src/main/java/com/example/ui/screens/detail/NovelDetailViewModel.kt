@@ -188,7 +188,7 @@ class NovelDetailViewModel(
     fun startFileImport(context: Context, uri: Uri) {
         viewModelScope.launch {
             try {
-                val fileName = getFileName(context, uri)
+                val fileName = withContext(Dispatchers.IO) { getFileName(context, uri) }
 
                 if (com.example.importexport.EpubParser.isEpubFile(fileName)) {
                     val epub = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -201,11 +201,12 @@ class NovelDetailViewModel(
                     val count = repository.importChapters(novelId, epub.chapters)
                     _events.emit(DetailEvent.ShowToast("Imported $count chapter(s) from EPUB."))
                 } else {
-                    val inputStream = context.contentResolver.openInputStream(uri)
-                    val reader = BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8))
-                    val content = reader.readText()
-                    reader.close()
-                    inputStream?.close()
+                    // Read off the main thread; strip a UTF-8 BOM so the first heading is still detected
+                    val content = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            input.bufferedReader(Charsets.UTF_8).readText()
+                        } ?: ""
+                    }.removePrefix("\uFEFF")
 
                     if (content.isBlank()) {
                         _events.emit(DetailEvent.ShowToast("The selected file is empty."))
@@ -239,22 +240,36 @@ class NovelDetailViewModel(
         return name
     }
 
+    private var importRunning = false
+
     fun completeImport(mode: ChapterSplitter.SplitMode, customMarker: String) {
         val text = _pendingImportText.value ?: return
+        if (importRunning) return // ignore double taps
+        importRunning = true
         viewModelScope.launch {
-            val chunks = ChapterSplitter.splitText(
-                text = text,
-                mode = mode,
-                customMarker = customMarker
-            )
-            if (chunks.isEmpty()) {
-                _events.emit(DetailEvent.ShowToast("No chapters detected."))
+            try {
+                val chunks = withContext(Dispatchers.Default) {
+                    ChapterSplitter.splitText(
+                        text = text,
+                        mode = mode,
+                        customMarker = customMarker
+                    )
+                }
+                if (chunks.isEmpty()) {
+                    _events.emit(DetailEvent.ShowToast("No chapters detected."))
+                    _pendingImportText.value = null
+                    return@launch
+                }
+                val count = repository.importChapters(novelId, chunks)
+                _events.emit(DetailEvent.ShowToast("Imported $count chapter(s)."))
                 _pendingImportText.value = null
-                return@launch
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _events.emit(DetailEvent.ShowToast("Import failed: ${e.localizedMessage}"))
+            } finally {
+                importRunning = false
             }
-            val count = repository.importChapters(novelId, chunks)
-            _events.emit(DetailEvent.ShowToast("Imported $count chapter(s)."))
-            _pendingImportText.value = null
         }
     }
 

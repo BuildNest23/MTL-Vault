@@ -78,7 +78,7 @@ class LibraryViewModel(
     fun startFileImport(context: Context, novelId: String?, uri: Uri) {
         viewModelScope.launch {
             try {
-                val fileName = getFileName(context, uri)
+                val fileName = withContext(Dispatchers.IO) { getFileName(context, uri) }
 
                 if (EpubParser.isEpubFile(fileName)) {
                     // EPUB Import Flow: Extracts metadata & chapters automatically!
@@ -106,11 +106,12 @@ class LibraryViewModel(
                     _events.emit(LibraryEvent.OpenNovel(effectiveNovelId))
                 } else {
                     // Plain text / TXT Import Flow
-                    val inputStream = context.contentResolver.openInputStream(uri)
-                    val reader = BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8))
-                    val content = reader.readText()
-                    reader.close()
-                    inputStream?.close()
+                    // Read off the main thread; strip a UTF-8 BOM so the first heading is still detected
+                    val content = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            input.bufferedReader(Charsets.UTF_8).readText()
+                        } ?: ""
+                    }.removePrefix("\uFEFF")
 
                     if (content.isBlank()) {
                         _events.emit(LibraryEvent.ShowToast("The selected file is empty."))
@@ -126,34 +127,49 @@ class LibraryViewModel(
         }
     }
 
+    private var importRunning = false
+
     fun completeImport(mode: ChapterSplitter.SplitMode, customMarker: String) {
         val text = _pendingImportText.value ?: return
         val targetId = _targetNovelId.value
+        if (importRunning) return // ignore double taps
+        importRunning = true
 
         viewModelScope.launch {
-            val effectiveNovelId = if (targetId != null) {
-                targetId
-            } else {
-                val firstLine = text.lineSequence().firstOrNull { it.isNotBlank() } ?: "Imported Novel"
-                repository.createNovel(title = firstLine.take(40))
-            }
+            try {
+                // Split first (off the main thread) so a failed split never leaves an empty novel behind
+                val chunks = withContext(Dispatchers.Default) {
+                    ChapterSplitter.splitText(
+                        text = text,
+                        mode = mode,
+                        customMarker = customMarker
+                    )
+                }
 
-            val chunks = ChapterSplitter.splitText(
-                text = text,
-                mode = mode,
-                customMarker = customMarker
-            )
+                if (chunks.isEmpty()) {
+                    _events.emit(LibraryEvent.ShowToast("No chapters detected."))
+                    _pendingImportText.value = null
+                    return@launch
+                }
 
-            if (chunks.isEmpty()) {
-                _events.emit(LibraryEvent.ShowToast("No chapters detected."))
+                val effectiveNovelId = if (targetId != null) {
+                    targetId
+                } else {
+                    val firstLine = text.lineSequence().firstOrNull { it.isNotBlank() } ?: "Imported Novel"
+                    repository.createNovel(title = firstLine.take(40))
+                }
+
+                val importedCount = repository.importChapters(effectiveNovelId, chunks)
+                _events.emit(LibraryEvent.ShowToast("Imported $importedCount chapter(s)."))
                 _pendingImportText.value = null
-                return@launch
+                _events.emit(LibraryEvent.OpenNovel(effectiveNovelId))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _events.emit(LibraryEvent.ShowToast("Import failed: ${e.localizedMessage}"))
+            } finally {
+                importRunning = false
             }
-
-            val importedCount = repository.importChapters(effectiveNovelId, chunks)
-            _events.emit(LibraryEvent.ShowToast("Imported $importedCount chapter(s)."))
-            _pendingImportText.value = null
-            _events.emit(LibraryEvent.OpenNovel(effectiveNovelId))
         }
     }
 
