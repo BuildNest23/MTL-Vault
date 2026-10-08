@@ -88,7 +88,8 @@ object ChapterSplitter {
                     } else {
                         "Prologue"
                     }
-                    if (content.isNotBlank() || title.isNotBlank()) {
+                    // Keep a real heading even if empty; drop an untitled, empty preface
+                    if (content.isNotBlank() || currentTitle.isNotBlank()) {
                         results.add(SplitChapterResult(title, content, countWords(content)))
                     }
                     currentLines.clear()
@@ -109,7 +110,7 @@ object ChapterSplitter {
             } else {
                 "$fallbackTitlePrefix${results.size + startingIndex}"
             }
-            if (content.isNotBlank() || title.isNotBlank()) {
+            if (content.isNotBlank() || currentTitle.isNotBlank()) {
                 results.add(SplitChapterResult(title, content, countWords(content)))
             }
         }
