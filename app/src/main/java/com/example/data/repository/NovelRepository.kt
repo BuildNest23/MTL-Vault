@@ -144,12 +144,15 @@ class NovelRepository(
 
     suspend fun deleteChapter(novelId: String, chapterId: String) = withContext(Dispatchers.IO) {
         val runBlock: suspend () -> Unit = {
+            val deletedOrder = chapterDao.getChapterByIdSync(chapterId)?.orderIndex
             chapterDao.deleteChapterById(chapterId)
             ReplacementEngine.invalidateChapter(chapterId)
             val novel = novelDao.getNovelByIdSync(novelId)
             if (novel?.lastChapterId == chapterId) {
-                val remaining = chapterDao.getChaptersForNovelSync(novelId)
-                val fallbackChapterId = remaining.lastOrNull()?.id
+                // Nearest following chapter, else the last remaining one (no chapter text is loaded)
+                val fallbackChapterId =
+                    (if (deletedOrder != null) chapterDao.getFirstChapterIdFrom(novelId, deletedOrder) else null)
+                        ?: chapterDao.getLastChapterId(novelId)
                 novelDao.updateLastChapter(novelId, fallbackChapterId, System.currentTimeMillis())
             }
         }
