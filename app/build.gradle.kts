@@ -44,11 +44,21 @@ android {
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       // Only sign when release secrets exist, so a missing keystore no longer breaks the build
-      if (!System.getenv("STORE_PASSWORD").isNullOrBlank()) {
+      // Sign only when the keystore file AND both passwords exist
+      val releaseKeystore = file(System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks")
+      if (releaseKeystore.exists() &&
+        !System.getenv("STORE_PASSWORD").isNullOrBlank() &&
+        !System.getenv("KEY_PASSWORD").isNullOrBlank()
+      ) {
         signingConfig = signingConfigs.getByName("release")
       }
     }
-    debug { signingConfig = signingConfigs.getByName("debugConfig") }
+    debug {
+      // Fall back to Android's default debug key when debug.keystore is not present (fresh clone)
+      if (rootProject.file("debug.keystore").exists()) {
+        signingConfig = signingConfigs.getByName("debugConfig")
+      }
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
