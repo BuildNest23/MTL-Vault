@@ -40,6 +40,8 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
+                // Re-check inside the lock so two racing callers can never build two databases
+                INSTANCE?.let { return@synchronized it }
                 try {
                     val instance = Room.databaseBuilder(
                         context.applicationContext,
