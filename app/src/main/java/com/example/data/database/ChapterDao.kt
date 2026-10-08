@@ -72,6 +72,12 @@ interface ChapterDao {
     @Query("DELETE FROM chapters WHERE id IN (:ids)")
     suspend fun deleteChaptersByIds(ids: List<String>)
 
+    @Query("SELECT id FROM chapters WHERE novelId = :novelId AND orderIndex >= :orderIndex ORDER BY orderIndex ASC LIMIT 1")
+    suspend fun getFirstChapterIdFrom(novelId: String, orderIndex: Int): String?
+
+    @Query("SELECT id FROM chapters WHERE novelId = :novelId ORDER BY orderIndex DESC LIMIT 1")
+    suspend fun getLastChapterId(novelId: String): String?
+
     @Query("DELETE FROM chapters WHERE novelId = :novelId")
     suspend fun deleteChaptersForNovel(novelId: String)
 
