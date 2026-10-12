@@ -149,6 +149,10 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     @Volatile
     private var currentChunkIndex = 0
+
+    /** Id of the sentence utterance we most recently asked the engine to speak. Callbacks for any
+     *  other id (e.g. a flushed/superseded utterance) are stale and must be ignored. */
+    @Volatile private var activeUtteranceId: String? = null
     @Volatile
     private var lastAdvancedChunk = -1
     private var currentNovelId: String? = null
@@ -377,6 +381,17 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 if (!isSpeakingActive) return
 
                 val parsed = parseUtteranceId(utteranceId)
+                // A flushed (superseded) utterance also reports onDone. Without this check the stale
+                // callback advanced the NEW sentence list, so double-tapping an earlier sentence
+                // jumped to the next one.
+                if (parsed != null && utteranceId != activeUtteranceId) {
+                    AppLogger.d("TtsManager", "onDone ignored (stale): $utteranceId, active=$activeUtteranceId")
+                    return
+                }
+                if (utteranceId != null && utteranceId.startsWith("silence_") &&
+                    extractChunkIndex(utteranceId) != currentChunkIndex) {
+                    return
+                }
                 if (parsed != null) {
                     val finishedChunk = parsed.chunkIndex
                     val finishedSub = parsed.subIndex
@@ -716,6 +731,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
 
         val chunkText = if (sub.text.any { it.isLetterOrDigit() }) sub.text else "."
+        activeUtteranceId = utteranceId
         val result = engine.speak(chunkText, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
         AppLogger.d("TtsManager", "speak: utteranceId=$utteranceId, chunkIndex=$chunkIndex, sub=$currentSubUtteranceIndex, len=${chunkText.length}, result=$result")
 
