@@ -22,6 +22,9 @@ data class NovelSummary(
     val progressPercent: Int
         get() = if (totalChapters > 0) (readChapters * 100) / totalChapters else 0
 
+    val unreadChapters: Int
+        get() = (totalChapters - readChapters).coerceAtLeast(0)
+
     val hasRules: Boolean
         get() = replacements.isNotBlank()
 }
