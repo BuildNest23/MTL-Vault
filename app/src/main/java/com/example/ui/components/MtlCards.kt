@@ -53,7 +53,7 @@ private val ChapterNumberRegex = Regex("""(?i)chapter\s*(\d+)""")
 
 /**
  * Library tile: cover image with two small badge cards at the top-left
- * (blue = total chapters, green = unread chapters), the title at the bottom
+ * (blue = total chapters, green = unread chapters, same size), the title at the bottom
  * and a "Ch. N" resume marker showing where you stopped reading.
  * A book with nothing left to read is dimmed.
  */
@@ -180,10 +180,8 @@ fun NovelCoverCard(
                 .padding(5.dp)
         ) {
             CountBadge(text = novel.totalChapters.toString(), bg = TotalBadgeBg, fg = TotalBadgeFg)
-            if (unread > 0) {
-                Box(modifier = Modifier.size(3.dp))
-                CountBadge(text = unread.toString(), bg = UnreadBadgeBg, fg = UnreadBadgeFg)
-            }
+            Box(modifier = Modifier.size(4.dp))
+            CountBadge(text = unread.toString(), bg = UnreadBadgeBg, fg = UnreadBadgeFg)
         }
 
         if (novel.hasRules) {
@@ -209,18 +207,21 @@ fun NovelCoverCard(
 
 @Composable
 private fun CountBadge(text: String, bg: Color, fg: Color) {
+    // Fixed size so the total and unread cards always have the same shape
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(5.dp))
-            .background(bg)
-            .padding(horizontal = 5.dp, vertical = 2.dp)
+            .size(width = 34.dp, height = 22.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(bg),
+        contentAlignment = Alignment.Center
     ) {
         Text(
             text = text,
             color = fg,
-            fontSize = 10.sp,
+            fontSize = if (text.length > 4) 9.sp else 11.sp,
             fontWeight = FontWeight.Bold,
-            maxLines = 1
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
