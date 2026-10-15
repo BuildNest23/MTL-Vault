@@ -17,10 +17,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.ContentPaste
@@ -30,6 +35,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -40,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -56,9 +66,22 @@ import com.example.importexport.ChapterSplitter
 import com.example.ui.components.ChapterSplitDialog
 import com.example.ui.components.EmptyState
 import com.example.ui.components.MtlTopBar
-import com.example.ui.components.NovelCard
+import com.example.ui.components.NovelCoverCard
 import com.example.ui.components.PromptDialog
 
+private enum class LibraryFilter(val label: String) {
+    ALL("All"),
+    UNREAD("Unread"),
+    RULES("Has rules")
+}
+
+private enum class LibrarySort(val label: String) {
+    LAST_READ("Last read"),
+    MOST_UNREAD("Most unread"),
+    TITLE("Title A–Z")
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     viewModel: LibraryViewModel,
@@ -70,6 +93,24 @@ fun LibraryScreen(
 
     var showCreateNovelDialog by remember { mutableStateOf(false) }
     var showPasteImportDialog by remember { mutableStateOf(false) }
+    var filter by rememberSaveable { mutableStateOf(LibraryFilter.ALL) }
+    var sort by rememberSaveable { mutableStateOf(LibrarySort.LAST_READ) }
+    var showSortMenu by remember { mutableStateOf(false) }
+
+    val visibleNovels = remember(novels, filter, sort) {
+        val filtered = when (filter) {
+            LibraryFilter.ALL -> novels
+            LibraryFilter.UNREAD -> novels.filter { it.unreadChapters > 0 }
+            LibraryFilter.RULES -> novels.filter { it.hasRules }
+        }
+        when (sort) {
+            LibrarySort.LAST_READ -> filtered.sortedByDescending { it.updatedAt }
+            LibrarySort.MOST_UNREAD -> filtered.sortedByDescending { it.unreadChapters }
+            LibrarySort.TITLE -> filtered.sortedBy { it.title.lowercase() }
+        }
+    }
+    val fullSpan: (androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() -> GridItemSpan) =
+        { GridItemSpan(maxLineSpan) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -96,14 +137,16 @@ fun LibraryScreen(
             )
         }
     ) { innerPadding ->
-        LazyColumn(
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(innerPadding),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            item {
+            item(span = fullSpan) {
                 Spacer(modifier = Modifier.height(4.dp))
                 // Info banner matching ClassGrid / MTL Vault style
                 Box(
@@ -137,7 +180,7 @@ fun LibraryScreen(
                 }
             }
 
-            item {
+            item(span = fullSpan) {
                 // Actions Header Card
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -229,8 +272,57 @@ fun LibraryScreen(
                 }
             }
 
+            if (novels.isNotEmpty()) {
+                item(span = fullSpan) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            LibraryFilter.values().forEach { option ->
+                                FilterChip(
+                                    selected = filter == option,
+                                    onClick = { filter = option },
+                                    label = { Text(option.label, fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                        Box {
+                            TextButton(onClick = { showSortMenu = true }) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.Sort,
+                                    contentDescription = "Sort",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(sort.label, fontSize = 12.sp, maxLines = 1)
+                            }
+                            DropdownMenu(
+                                expanded = showSortMenu,
+                                onDismissRequest = { showSortMenu = false }
+                            ) {
+                                LibrarySort.values().forEach { option ->
+                                    DropdownMenuItem(
+                                        text = { Text(option.label) },
+                                        onClick = {
+                                            sort = option
+                                            showSortMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (novels.isEmpty()) {
-                item {
+                item(span = fullSpan) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally
@@ -253,19 +345,31 @@ fun LibraryScreen(
                         }
                     }
                 }
+            } else if (visibleNovels.isEmpty()) {
+                item(span = fullSpan) {
+                    Text(
+                        text = "No novels match this filter.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
             } else {
                 items(
-                    items = novels,
+                    items = visibleNovels,
                     key = { it.id }
                 ) { novel ->
-                    NovelCard(
+                    NovelCoverCard(
                         novel = novel,
                         onClick = { onOpenNovel(novel.id) }
                     )
                 }
             }
 
-            item {
+            item(span = fullSpan) {
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
