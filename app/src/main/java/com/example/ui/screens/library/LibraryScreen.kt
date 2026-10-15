@@ -133,7 +133,7 @@ fun LibraryScreen(
         topBar = {
             MtlTopBar(
                 title = "MTL Vault",
-                subtitle = "Translate • Read • Listen"
+                subtitle = "Save • Read • Listen"
             )
         }
     ) { innerPadding ->
@@ -148,36 +148,6 @@ fun LibraryScreen(
         ) {
             item(span = fullSpan) {
                 Spacer(modifier = Modifier.height(4.dp))
-                // Info banner matching ClassGrid / MTL Vault style
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                        .border(
-                            width = 1.dp,
-                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                        .padding(14.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "Your offline novel vault. Create a novel, import text or files, then read or listen with native speech.",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = MaterialTheme.colorScheme.onSurface,
-                                lineHeight = 18.sp
-                            )
-                        )
-                    }
-                }
             }
 
             item(span = fullSpan) {
