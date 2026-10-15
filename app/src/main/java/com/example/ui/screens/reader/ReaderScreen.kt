@@ -48,13 +48,24 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.foundation.layout.fillMaxHeight
+import com.example.data.model.ChapterSummary
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatSize
@@ -136,7 +147,8 @@ fun ReaderScreen(
     val initialParagraphIndex by viewModel.initialParagraphIndex.collectAsStateWithLifecycle()
 
     var showSettingsSheet by remember { mutableStateOf(false) }
-    var showChapterPicker by remember { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val drawerScope = rememberCoroutineScope()
     var controlsVisible by remember { mutableStateOf(true) }
 
     val lazyListState = rememberLazyListState()
@@ -153,8 +165,12 @@ fun ReaderScreen(
         }
     }
 
-    BackHandler {
+    BackHandler(enabled = !drawerState.isOpen) {
         onBackClick()
+    }
+    // Back closes the chapter list first
+    BackHandler(enabled = drawerState.isOpen) {
+        drawerScope.launch { drawerState.close() }
     }
 
     LaunchedEffect(Unit) {
@@ -433,6 +449,22 @@ fun ReaderScreen(
         )
     }
 
+    // Swipe right anywhere on the page (or tap the title / list button) to open the chapter list
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = true,
+        drawerContent = {
+            ChapterDrawerContent(
+                chapters = chaptersList,
+                currentChapterId = chapter?.id,
+                isOpen = drawerState.targetValue == DrawerValue.Open,
+                onChapterClick = { chapterId ->
+                    drawerScope.launch { drawerState.close() }
+                    if (chapterId != chapter?.id) viewModel.loadChapter(chapterId)
+                }
+            )
+        }
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -550,7 +582,7 @@ fun ReaderScreen(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clickable { showChapterPicker = true }
+                            .clickable { drawerScope.launch { drawerState.open() } }
                             .padding(vertical = 4.dp)
                     ) {
                         Text(
@@ -607,6 +639,17 @@ fun ReaderScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { drawerScope.launch { drawerState.open() } },
+                        modifier = Modifier.testTag("reader_chapter_list_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.List,
+                            contentDescription = "Chapter list",
+                            tint = textColor
+                        )
+                    }
+
                     IconButton(
                         onClick = onOpenReplacements,
                         modifier = Modifier.testTag("reader_replacements_button")
@@ -680,6 +723,7 @@ fun ReaderScreen(
             )
         }
     }
+    }
 
     // Appearance Modal Bottom Sheet
     if (showSettingsSheet) {
@@ -689,93 +733,155 @@ fun ReaderScreen(
             onDismiss = { showSettingsSheet = false }
         )
     }
+}
 
-    // Chapter Picker Dialog
-    if (showChapterPicker) {
-        var query by remember { mutableStateOf("") }
-        val filteredChapters = remember(query, chaptersList) {
-            if (query.isBlank()) chaptersList else chaptersList.filter { it.title.contains(query, ignoreCase = true) }
+/**
+ * Chapter list that slides in from the left. Opens at the current chapter, dims read chapters,
+ * and has search (also accepts a chapter number), jump-to-current and hide-read buttons.
+ */
+@Composable
+private fun ChapterDrawerContent(
+    chapters: List<ChapterSummary>,
+    currentChapterId: String?,
+    isOpen: Boolean,
+    onChapterClick: (String) -> Unit
+) {
+    var searching by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var hideRead by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    val displayed = remember(chapters, query, hideRead, currentChapterId) {
+        val number = query.trim().toIntOrNull()
+        chapters.filter { ch ->
+            val isCurrent = ch.id == currentChapterId
+            val matchesQuery = query.isBlank() ||
+                ch.title.contains(query.trim(), ignoreCase = true) ||
+                (number != null && ch.orderIndex + 1 == number)
+            val passesRead = !hideRead || !ch.read || isCurrent
+            matchesQuery && passesRead
         }
+    }
+    val readCount = remember(chapters) { chapters.count { it.read } }
 
-        AlertDialog(
-            onDismissRequest = { showChapterPicker = false },
-            title = {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Select Chapter", style = MaterialTheme.typography.titleLarge)
-                    IconButton(onClick = { showChapterPicker = false }) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
-                    }
-                }
-            },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        placeholder = { Text("Search chapters...") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp)
+    fun currentIndex(): Int = displayed.indexOfFirst { it.id == currentChapterId }
+
+    // Every time the list opens, show the current chapter (a few rows from the top, so you see what is next)
+    LaunchedEffect(isOpen, currentChapterId, chapters.size) {
+        if (isOpen && query.isBlank()) {
+            val idx = currentIndex()
+            if (idx >= 0) listState.scrollToItem((idx - 4).coerceAtLeast(0))
+        }
+    }
+
+    ModalDrawerSheet {
+        Column(modifier = Modifier.fillMaxHeight()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Chapters",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    LazyColumn(
+                    Text(
+                        text = "$readCount of ${chapters.size} read",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = {
+                    searching = !searching
+                    if (!searching) query = ""
+                }) {
+                    Icon(
+                        imageVector = if (searching) Icons.Default.Close else Icons.Default.Search,
+                        contentDescription = "Search chapters"
+                    )
+                }
+                IconButton(onClick = {
+                    query = ""
+                    searching = false
+                    scope.launch {
+                        val idx = chapters.indexOfFirst { it.id == currentChapterId }
+                        if (idx >= 0) listState.animateScrollToItem(idx)
+                    }
+                }) {
+                    Icon(Icons.Default.MyLocation, contentDescription = "Go to current chapter")
+                }
+                IconButton(onClick = { hideRead = !hideRead }) {
+                    Icon(
+                        imageVector = Icons.Default.FilterList,
+                        contentDescription = if (hideRead) "Show read chapters" else "Hide read chapters",
+                        tint = if (hideRead) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (searching) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("Search or type a chapter number") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(10.dp)
+                )
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                items(items = displayed, key = { it.id }) { ch ->
+                    val isCurrent = ch.id == currentChapterId
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(350.dp)
+                            .background(
+                                if (isCurrent) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                            )
+                            .clickable { onChapterClick(ch.id) }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        itemsIndexed(filteredChapters) { _, ch ->
-                            val isCurrent = ch.id == chapter?.id
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        showChapterPicker = false
-                                        viewModel.loadChapter(ch.id)
-                                    },
-                                color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "${ch.orderIndex + 1}. ${ch.title}",
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                                        ),
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    if (ch.read) {
-                                        Text(
-                                            text = "✓",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
+                        Text(
+                            text = ch.title.ifBlank { "Chapter ${ch.orderIndex + 1}" },
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                color = when {
+                                    isCurrent -> MaterialTheme.colorScheme.onPrimaryContainer
+                                    ch.read -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    else -> MaterialTheme.colorScheme.onSurface
                                 }
-                            }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                            ),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (isCurrent) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Current chapter",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
                 }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showChapterPicker = false }) {
-                    Text("Close")
-                }
-            },
-            shape = RoundedCornerShape(16.dp)
-        )
+            }
+        }
     }
 }
 
