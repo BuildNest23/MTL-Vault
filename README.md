@@ -1,6 +1,6 @@
 # 📖 MTL Vault
 
-> **Translate • Read • Listen**
+> **Save • Read • Listen**
 > An offline-first novel library, reader, and text-to-speech app for Android, built with Kotlin, Jetpack Compose and Material 3.
 
 MTL Vault keeps your machine-translated (or any other) web novels in one private library on your phone. Import chapters, clean up the text with your own replacement rules, read in a comfortable reader, or just press play and listen.
