@@ -71,6 +71,10 @@ interface NovelDao {
     @Query("UPDATE novels SET replacements = :rules, replacementsEnabled = :enabled, updatedAt = :updatedAt WHERE id = :novelId")
     suspend fun updateReplacements(novelId: String, rules: String, enabled: Boolean, updatedAt: Long = System.currentTimeMillis())
 
+    /** Updates online metadata without touching updatedAt, so "Last read" ordering is unchanged. */
+    @Query("UPDATE novels SET description = :description, coverUri = :coverUri, author = :author WHERE id = :novelId")
+    suspend fun updateMetadata(novelId: String, description: String, coverUri: String?, author: String)
+
     @Query("SELECT COUNT(*) FROM novels")
     fun getNovelCount(): Flow<Int>
 
