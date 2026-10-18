@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
@@ -179,12 +180,22 @@ fun LibraryScreen(
                                 )
                             )
 
-                            TextButton(
-                                onClick = { viewModel.loadSampleNovel() }
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text("Example Book", fontSize = 12.sp)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(
+                                    onClick = { viewModel.fetchMissingInfo(context) },
+                                    modifier = Modifier.testTag("library_fetch_info_button")
+                                ) {
+                                    Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text("Fetch covers", fontSize = 12.sp)
+                                }
+                                TextButton(
+                                    onClick = { viewModel.loadSampleNovel() }
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text("Example", fontSize = 12.sp)
+                                }
                             }
                         }
 

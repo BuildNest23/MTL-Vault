@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.NovelSummary
+import com.example.data.remote.AniListClient
 import com.example.data.repository.NovelRepository
 import com.example.importexport.ChapterSplitter
 import com.example.importexport.EpubParser
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -67,6 +69,60 @@ class LibraryViewModel(
             val novelId = repository.createNovel(title = title.trim())
             _events.emit(LibraryEvent.ShowToast("Novel created."))
             _events.emit(LibraryEvent.OpenNovel(novelId))
+        }
+    }
+
+    private var fetchRunning = false
+
+    /**
+     * Looks up AniList for every novel that has no cover or no description and fills in
+     * whatever is missing. Existing covers/descriptions/authors are never overwritten.
+     */
+    fun fetchMissingInfo(context: Context) {
+        if (fetchRunning) return
+        val targets = novels.value.filter { it.coverUri.isNullOrBlank() || it.description.isBlank() }
+        if (targets.isEmpty()) {
+            viewModelScope.launch { _events.emit(LibraryEvent.ShowToast("All novels already have a cover and description.")) }
+            return
+        }
+        fetchRunning = true
+        val appContext = context.applicationContext
+        viewModelScope.launch {
+            var updated = 0
+            try {
+                _events.emit(LibraryEvent.ShowToast("Fetching info for ${targets.size} novel(s)..."))
+                for ((index, novel) in targets.withIndex()) {
+                    val meta = AniListClient.search(novel.title)
+                    if (meta != null) {
+                        var coverUri = novel.coverUri
+                        if (coverUri.isNullOrBlank() && meta.coverUrl != null) {
+                            val file = File(appContext.filesDir, "covers/${novel.id}_${System.currentTimeMillis()}.jpg")
+                            if (AniListClient.downloadImage(meta.coverUrl, file)) {
+                                coverUri = Uri.fromFile(file).toString()
+                            }
+                        }
+                        val description = novel.description.ifBlank { meta.description }
+                        val author = novel.author.ifBlank { meta.author }
+                        if (coverUri != novel.coverUri || description != novel.description || author != novel.author) {
+                            repository.updateNovelMetadata(novel.id, description, coverUri, author)
+                            updated++
+                        }
+                    }
+                    if (index < targets.lastIndex) kotlinx.coroutines.delay(800) // stay under AniList rate limit
+                }
+                _events.emit(LibraryEvent.ShowToast(
+                    if (updated > 0) "Updated $updated novel(s)." else "No matches found online."
+                ))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _events.emit(LibraryEvent.ShowToast(
+                    if (updated > 0) "Updated $updated novel(s), then stopped: ${e.localizedMessage}"
+                    else "Fetch failed: ${e.localizedMessage}"
+                ))
+            } finally {
+                fetchRunning = false
+            }
         }
     }
 
