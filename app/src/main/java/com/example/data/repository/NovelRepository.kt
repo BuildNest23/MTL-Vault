@@ -92,6 +92,11 @@ class NovelRepository(
         novelDao.updateNovel(novel.copy(updatedAt = System.currentTimeMillis()))
     }
 
+    suspend fun updateNovelMetadata(novelId: String, description: String, coverUri: String?, author: String) =
+        withContext(Dispatchers.IO) {
+            novelDao.updateMetadata(novelId, description, coverUri, author)
+        }
+
     suspend fun deleteNovel(novelId: String) = withContext(Dispatchers.IO) {
         val runBlock: suspend () -> Unit = {
             val chapters = chapterDao.getChaptersForNovelSync(novelId)
