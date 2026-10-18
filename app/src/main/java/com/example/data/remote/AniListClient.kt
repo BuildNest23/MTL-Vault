@@ -35,8 +35,9 @@ object AniListClient {
 
     private const val QUERY = """
         query (${'$'}search: String) {
-          Page(perPage: 8) {
-            media(search: ${'$'}search, type: MANGA, format: NOVEL) {
+          Page(perPage: 15) {
+            media(search: ${'$'}search, type: MANGA, sort: SEARCH_MATCH) {
+              format
               title { romaji english native }
               synonyms
               description(asHtml: false)
@@ -47,8 +48,14 @@ object AniListClient {
         }
     """
 
-    /** Returns the best match for [title], or null if nothing similar was found. */
-    suspend fun search(title: String): NovelMetadata? = withContext(Dispatchers.IO) {
+    /** Tries AniList first, then Jikan (MyAnimeList). Returns null if nothing similar was found. */
+    suspend fun search(title: String): NovelMetadata? {
+        val clean = title.replace(Regex("\\(.*?\\)|\\[.*?]"), " ").trim().ifBlank { title.trim() }
+        searchAniList(clean)?.let { return it }
+        return try { searchJikan(clean) } catch (e: RateLimitException) { null }
+    }
+
+    private suspend fun searchAniList(title: String): NovelMetadata? = withContext(Dispatchers.IO) {
         val query = title.trim()
         if (query.isEmpty()) return@withContext null
 
@@ -76,7 +83,9 @@ object AniListClient {
             var bestScore = 0.0
             for (i in 0 until media.length()) {
                 val item = media.getJSONObject(i)
-                val score = scoreMatch(query, item)
+                var score = scoreMatch(query, item)
+                // Prefer real novels over manga/manhua adaptations when titles match equally well.
+                if (item.optString("format") == "NOVEL") score += 0.05
                 if (score > bestScore) {
                     bestScore = score
                     best = item
@@ -85,6 +94,49 @@ object AniListClient {
             // Ignore weak matches so we never attach a wrong cover.
             if (best == null || bestScore < 0.6) return@withContext null
             toMetadata(best)
+        }
+    }
+
+    private suspend fun searchJikan(title: String): NovelMetadata? = withContext(Dispatchers.IO) {
+        val url = okhttp3.HttpUrl.Builder()
+            .scheme("https").host("api.jikan.moe")
+            .addPathSegments("v4/manga")
+            .addQueryParameter("q", title)
+            .addQueryParameter("limit", "10")
+            .build()
+        client.newCall(Request.Builder().url(url).header("Accept", "application/json").build()).execute().use { response ->
+            if (response.code == 429) throw RateLimitException()
+            if (!response.isSuccessful) return@withContext null
+            val data = JSONObject(response.body?.string() ?: return@withContext null)
+                .optJSONArray("data") ?: return@withContext null
+
+            var best: JSONObject? = null
+            var bestScore = 0.0
+            for (i in 0 until data.length()) {
+                val item = data.getJSONObject(i)
+                val names = mutableListOf<String>()
+                listOf("title", "title_english").forEach { k ->
+                    item.optString(k).takeIf { it.isNotBlank() && it != "null" }?.let(names::add)
+                }
+                item.optJSONArray("titles")?.let { arr ->
+                    for (j in 0 until arr.length()) arr.optJSONObject(j)?.optString("title")?.let(names::add)
+                }
+                var score = names.maxOfOrNull { similarity(title, it) } ?: 0.0
+                if (item.optString("type").contains("novel", ignoreCase = true)) score += 0.05
+                if (score > bestScore) { bestScore = score; best = item }
+            }
+            if (best == null || bestScore < 0.6) return@withContext null
+
+            val jpg = best.optJSONObject("images")?.optJSONObject("jpg")
+            val cover = jpg?.optString("large_image_url").orEmpty().ifBlank { jpg?.optString("image_url").orEmpty() }
+            val author = best.optJSONArray("authors")?.optJSONObject(0)?.optString("name").orEmpty()
+                .split(",").map { it.trim() }.reversed().joinToString(" ")
+            NovelMetadata(
+                title = best.optString("title"),
+                description = cleanDescription(best.optString("synopsis")),
+                coverUrl = cover.takeIf { it.isNotBlank() },
+                author = author
+            )
         }
     }
 
@@ -145,8 +197,11 @@ object AniListClient {
             .trim()
     }
 
-    private fun normalize(s: String): String =
+    private val stopWords = setOf("the", "a", "an", "of", "and", "in", "to")
+
+    private fun words(s: String): Set<String> =
         s.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+            .split(" ").filter { it.isNotEmpty() && it !in stopWords }.toSet()
 
     private fun candidateTitles(item: JSONObject): List<String> {
         val out = mutableListOf<String>()
@@ -160,21 +215,19 @@ object AniListClient {
         return out
     }
 
-    /** 1.0 = exact title match, otherwise word-overlap ratio (0..0.95). */
-    private fun scoreMatch(query: String, item: JSONObject): Double {
-        val q = normalize(query)
-        val qWords = q.split(" ").filter { it.isNotEmpty() }.toSet()
-        if (qWords.isEmpty()) return 0.0
-        var best = 0.0
-        for (candidate in candidateTitles(item)) {
-            val c = normalize(candidate)
-            if (c == q) return 1.0
-            val cWords = c.split(" ").filter { it.isNotEmpty() }.toSet()
-            if (cWords.isEmpty()) continue
-            val overlap = qWords.intersect(cWords).size.toDouble()
-            val score = 0.95 * overlap / maxOf(qWords.size, cWords.size)
-            if (score > best) best = score
-        }
-        return best
+    /** 1.0 = same words, otherwise overlap ratio; a multi-word query fully contained in a title scores 0.8. */
+    private fun similarity(query: String, candidate: String): Double {
+        val q = words(query)
+        val c = words(candidate)
+        if (q.isEmpty() || c.isEmpty()) return 0.0
+        if (q == c) return 1.0
+        val overlap = q.intersect(c).size.toDouble()
+        var score = 0.95 * overlap / maxOf(q.size, c.size)
+        if (q.size >= 2 && c.containsAll(q)) score = maxOf(score, 0.8)
+        if (c.size >= 2 && q.containsAll(c)) score = maxOf(score, 0.8)
+        return score
     }
+
+    private fun scoreMatch(query: String, item: JSONObject): Double =
+        candidateTitles(item).maxOfOrNull { similarity(query, it) } ?: 0.0
 }
