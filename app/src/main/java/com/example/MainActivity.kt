@@ -12,7 +12,12 @@ import com.example.ui.navigation.MtlVaultNavGraph
 import com.example.ui.theme.MtlVaultTheme
 
 import android.content.Intent
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 class MainActivity : ComponentActivity() {
 
@@ -39,7 +44,12 @@ class MainActivity : ComponentActivity() {
 
         val app = application as MtlVaultApplication
         setContent {
-            MtlVaultTheme {
+            val dynamicColorFlow = app.settingsDataStore.dynamicColorFlow
+            // Read the saved value up front so there's no green flash on launch
+            val dynamicColor by dynamicColorFlow.collectAsState(
+                initial = remember { runBlocking { dynamicColorFlow.first() } }
+            )
+            MtlVaultTheme(dynamicColor = dynamicColor) {
                 MtlVaultNavGraph(
                     application = app,
                     intent = currentIntentState.value,
