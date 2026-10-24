@@ -35,6 +35,7 @@ class SettingsDataStore(private val context: Context) {
         val DETAILED_LOGGING = booleanPreferencesKey("detailed_logging")
         val SPLIT_LONG_PARAGRAPHS = stringPreferencesKey("split_long_paragraphs")
         val HIDE_READ_CHAPTERS = booleanPreferencesKey("hide_read_chapters")
+        val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
     }
 
     val settingsFlow: Flow<ReaderSettings> = context.dataStore.data
@@ -74,6 +75,22 @@ class SettingsDataStore(private val context: Context) {
         .map { preferences ->
             preferences[PreferencesKeys.HIDE_READ_CHAPTERS] ?: false
         }
+
+    val dynamicColorFlow: Flow<Boolean> = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw exception
+            }
+        }
+        .map { preferences ->
+            preferences[PreferencesKeys.DYNAMIC_COLOR] ?: false
+        }
+
+    suspend fun updateDynamicColor(enabled: Boolean) {
+        context.dataStore.edit { it[PreferencesKeys.DYNAMIC_COLOR] = enabled }
+    }
 
     suspend fun updateTheme(theme: String) {
         context.dataStore.edit { it[PreferencesKeys.THEME] = theme }
