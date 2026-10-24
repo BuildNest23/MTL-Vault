@@ -65,6 +65,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.importexport.ChapterSplitter
 import com.example.ui.components.ChapterSplitDialog
+import com.example.ui.components.MtlActionButton
+import com.example.ui.components.MtlButtonStyle
 import com.example.ui.components.EmptyState
 import com.example.ui.components.MtlTopBar
 import com.example.ui.components.NovelCoverCard
@@ -205,49 +207,31 @@ fun LibraryScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Button(
+                            MtlActionButton(
+                                text = "Novel",
+                                icon = Icons.Default.Add,
                                 onClick = { showCreateNovelDialog = true },
+                                style = MtlButtonStyle.Primary,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(42.dp)
-                                    .testTag("library_new_novel_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            ) {
-                                Text("+ Novel", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                            }
-
-                            OutlinedButton(
+                                    .testTag("library_new_novel_button")
+                            )
+                            MtlActionButton(
+                                text = "Select file",
+                                icon = Icons.Default.FolderOpen,
                                 onClick = { filePickerLauncher.launch("*/*") },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(42.dp)
-                                    .testTag("library_import_file_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
-                            ) {
-                                Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text("Select file", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                            }
-
-                            Button(
+                                    .testTag("library_import_file_button")
+                            )
+                            MtlActionButton(
+                                text = "Paste",
+                                icon = Icons.Default.ContentPaste,
                                 onClick = { showPasteImportDialog = true },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(42.dp)
-                                    .testTag("library_paste_import_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
-                            ) {
-                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text("Paste", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                            }
+                                    .testTag("library_paste_import_button")
+                            )
                         }
                     }
                 }
