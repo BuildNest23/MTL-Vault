@@ -79,6 +79,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.importexport.ChapterSplitter
 import com.example.replacement.ReplacementEngine
+import com.example.ui.components.MtlActionButton
+import com.example.ui.components.MtlButtonStyle
 import com.example.ui.components.ChapterSplitDialog
 import com.example.ui.components.ConfirmDialog
 import com.example.ui.components.EmptyState
@@ -319,54 +321,64 @@ fun NovelDetailScreen(
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        // Quick Actions Grid / Row
+                        // Quick actions: one primary (Play), a row for adding content, a row of tools
+                        val targetChapter = remember(chapters, currentNovel.lastChapterId) {
+                            val lastId = currentNovel.lastChapterId
+                            if (!lastId.isNullOrBlank()) {
+                                chapters.find { it.id == lastId }
+                            } else {
+                                chapters.firstOrNull { !it.read } ?: chapters.firstOrNull()
+                            } ?: chapters.firstOrNull()
+                        }
+
+                        MtlActionButton(
+                            text = "Play",
+                            icon = Icons.Default.PlayArrow,
+                            onClick = {
+                                if (targetChapter != null) {
+                                    onPlayNovel(targetChapter.id)
+                                } else {
+                                    Toast.makeText(context, "No chapters available to play", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            style = MtlButtonStyle.Primary,
+                            large = true,
+                            enabled = chapters.isNotEmpty(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("detail_play_novel_button")
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Button(
+                            MtlActionButton(
+                                text = "Chapter",
+                                icon = Icons.Default.Add,
                                 onClick = { onOpenEditor(null) },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(42.dp)
-                                    .testTag("detail_add_chapter_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            ) {
-                                Text("+ Chapter", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                            }
-
-                            OutlinedButton(
+                                    .testTag("detail_add_chapter_button")
+                            )
+                            MtlActionButton(
+                                text = "Select file",
+                                icon = Icons.Default.FolderOpen,
                                 onClick = { filePickerLauncher.launch("*/*") },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(42.dp)
-                                    .testTag("detail_import_file_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
-                            ) {
-                                Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text("Select file", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                            }
-
-                            Button(
+                                    .testTag("detail_import_file_button")
+                            )
+                            MtlActionButton(
+                                text = "Paste",
+                                icon = Icons.Default.ContentPaste,
                                 onClick = { showPasteImportDialog = true },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(42.dp)
-                                    .testTag("detail_paste_import_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
-                            ) {
-                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text("Paste", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                            }
+                                    .testTag("detail_paste_import_button")
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -375,71 +387,28 @@ fun NovelDetailScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            OutlinedButton(
+                            MtlActionButton(
+                                text = "Rules ($rulesCount)",
+                                icon = Icons.Default.SwapHoriz,
                                 onClick = onOpenReplacements,
+                                style = MtlButtonStyle.Subtle,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(42.dp)
-                                    .testTag("detail_open_replacements_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                            ) {
-                                Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Rules ($rulesCount)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                            }
-
-                            val targetChapter = remember(chapters, currentNovel.lastChapterId) {
-                                val lastId = currentNovel.lastChapterId
-                                if (!lastId.isNullOrBlank()) {
-                                    chapters.find { it.id == lastId }
-                                } else {
-                                    chapters.firstOrNull { !it.read } ?: chapters.firstOrNull()
-                                } ?: chapters.firstOrNull()
-                            }
-
-                            Button(
-                                onClick = {
-                                    if (targetChapter != null) {
-                                        onPlayNovel(targetChapter.id)
-                                    } else {
-                                        Toast.makeText(context, "No chapters available to play", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                enabled = chapters.isNotEmpty(),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(42.dp)
-                                    .testTag("detail_play_novel_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary
-                                )
-                            ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Play", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                            }
-
-                            OutlinedButton(
+                                    .testTag("detail_open_replacements_button")
+                            )
+                            MtlActionButton(
+                                text = "Export EPUB",
+                                icon = Icons.Default.FileDownload,
                                 onClick = {
                                     val safeName = currentNovel.title.replace(Regex("[^a-zA-Z0-9.-]"), "_").trim('_')
                                     pendingExportSelectedOnly = false
                                     createEpubLauncher.launch("$safeName.epub")
                                 },
+                                style = MtlButtonStyle.Subtle,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(42.dp)
-                                    .testTag("detail_export_novel_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                            ) {
-                                Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Export EPUB", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                            }
+                                    .testTag("detail_export_novel_button")
+                            )
                         }
                     }
                 }
