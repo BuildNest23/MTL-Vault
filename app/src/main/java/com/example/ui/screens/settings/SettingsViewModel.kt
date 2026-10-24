@@ -43,6 +43,15 @@ class SettingsViewModel(
     val settings: StateFlow<ReaderSettings> = settingsDataStore.settingsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ReaderSettings())
 
+    val dynamicColor: StateFlow<Boolean> = settingsDataStore.dynamicColorFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun updateDynamicColor(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore.updateDynamicColor(enabled)
+        }
+    }
+
     private val _logSizeText = MutableStateFlow("0 KB")
     val logSizeText: StateFlow<String> = _logSizeText.asStateFlow()
 

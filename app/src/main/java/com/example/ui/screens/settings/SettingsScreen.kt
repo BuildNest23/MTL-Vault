@@ -66,6 +66,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val logSize by viewModel.logSizeText.collectAsStateWithLifecycle()
+    val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
     var showResetDialog by remember { mutableStateOf(false) }
     var showClearLogDialog by remember { mutableStateOf(false) }
 
@@ -138,6 +139,48 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 lineHeight = 18.sp
                             )
+                        )
+                    }
+                }
+            }
+
+            // App Colors Card (Material You)
+            item {
+                val dynamicSupported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                text = "Material You colors",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (dynamicSupported) {
+                                    "Match the app's colors to your wallpaper and system theme."
+                                } else {
+                                    "Requires Android 12 or newer."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = dynamicColor && dynamicSupported,
+                            onCheckedChange = { viewModel.updateDynamicColor(it) },
+                            enabled = dynamicSupported,
+                            modifier = Modifier.testTag("settings_dynamic_color_switch")
                         )
                     }
                 }
