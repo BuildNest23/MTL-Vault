@@ -120,6 +120,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.tts.TtsManager
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalTextToolbar
+import com.example.ui.components.AddRuleFromSelectionDialog
+import com.example.ui.components.ReaderSelectionPopup
+import com.example.ui.components.rememberReaderTextToolbar
 import com.example.ui.components.ReaderSettingsBottomSheet
 import com.example.ui.components.TtsPlayerBar
 import com.example.ui.theme.ReaderDarkBg
@@ -147,6 +153,9 @@ fun ReaderScreen(
     val initialParagraphIndex by viewModel.initialParagraphIndex.collectAsStateWithLifecycle()
 
     var showSettingsSheet by remember { mutableStateOf(false) }
+    val selectionToolbar = rememberReaderTextToolbar()
+    // Text the person selected and wants to turn into a replacement rule (null = dialog closed)
+    var replaceSeed by remember { mutableStateOf<String?>(null) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val drawerScope = rememberCoroutineScope()
     var controlsVisible by remember { mutableStateOf(true) }
@@ -470,7 +479,11 @@ fun ReaderScreen(
             .fillMaxSize()
             .background(bgColor)
     ) {
-        // Content Area with LazyColumn for high performance
+        // Content Area with LazyColumn for high performance.
+        // Wrapped in a SelectionContainer so text can be long-pressed and selected; the floating
+        // menu (Copy / Replace / Define / More) is our own, see ReaderSelectionMenu.kt.
+        CompositionLocalProvider(LocalTextToolbar provides selectionToolbar) {
+        SelectionContainer {
         LazyColumn(
             state = lazyListState,
             modifier = Modifier
@@ -569,6 +582,13 @@ fun ReaderScreen(
                 }
             }
         }
+        }
+        }
+
+        ReaderSelectionPopup(
+            toolbar = selectionToolbar,
+            onReplace = { selected -> replaceSeed = selected }
+        )
 
         // Animated Top Navigation Bar
         AnimatedVisibility(
@@ -723,6 +743,17 @@ fun ReaderScreen(
             )
         }
     }
+    }
+
+    replaceSeed?.let { seed ->
+        AddRuleFromSelectionDialog(
+            initialFind = seed,
+            onDismiss = { replaceSeed = null },
+            onSave = { find, replacement, caseSensitive, partial ->
+                viewModel.addReplacementRule(find, replacement, caseSensitive, partial)
+                replaceSeed = null
+            }
+        )
     }
 
     // Appearance Modal Bottom Sheet

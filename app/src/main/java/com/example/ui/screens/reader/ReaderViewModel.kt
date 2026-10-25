@@ -101,6 +101,18 @@ class ReaderViewModel(
         ttsManager.onNextChapterRequested = onNextRequested
         ttsManager.onPrevChapterRequested = onPrevRequested
 
+        // When the novel's rules change (e.g. edited on the Rules screen), re-render the open chapter.
+        viewModelScope.launch {
+            var lastRulesKey: String? = null
+            novel.collect { n ->
+                if (n != null) {
+                    val key = n.replacements + "|" + n.replacementsEnabled
+                    if (lastRulesKey != null && lastRulesKey != key) refreshRenderedContent()
+                    lastRulesKey = key
+                }
+            }
+        }
+
         viewModelScope.launch {
             var previousSplitMode: String? = null
             settingsDataStore.settingsFlow.collect { newSettings ->
@@ -169,6 +181,40 @@ class ReaderViewModel(
             _currentChapter.value = null
             com.example.logging.AppLogger.w("ReaderViewModel", "loadChapter: chapter not found for id=$chapterId")
         }
+    }
+
+    /**
+     * Adds "find = replace" to this novel's replacement rules (same format as the Rules screen)
+     * and re-renders the open chapter so the change shows up straight away.
+     */
+    fun addReplacementRule(find: String, replace: String, caseSensitive: Boolean, partialMatch: Boolean) {
+        val trimmedFind = find.trim()
+        if (trimmedFind.isEmpty()) return
+        val trimmedReplace = replace.trim()
+        viewModelScope.launch {
+            val n = repository.getNovelByIdSync(novelId) ?: return@launch
+            val flags = buildString {
+                if (caseSensitive) append("[cs] ")
+                if (partialMatch) append("[nww] ")
+            }
+            val line = "$flags$trimmedFind = $trimmedReplace"
+            val updated = if (n.replacements.isBlank()) line else n.replacements.trimEnd() + "\n" + line
+            repository.updateReplacements(novelId, updated, n.replacementsEnabled)
+            refreshRenderedContent()
+            val note = if (n.replacementsEnabled) "" else " (replacements are switched off for this novel)"
+            _events.emit(ReaderEvent.ShowToast("Rule added: $trimmedFind ➔ $trimmedReplace$note"))
+        }
+    }
+
+    /** Re-renders the open chapter with the latest rules. Skipped while TTS is reading it, so the
+     *  spoken text and the highlighted paragraphs never get out of step. */
+    private suspend fun refreshRenderedContent() {
+        val chapter = _currentChapter.value ?: return
+        val info = ttsManager.playbackInfo.value
+        val ttsActiveHere = info.chapterId == chapter.id &&
+            (info.state == com.example.tts.TtsState.PLAYING || info.state == com.example.tts.TtsState.PAUSED)
+        if (ttsActiveHere) return
+        _renderedContent.value = repository.getRenderedChapterContent(novelId, chapter)
     }
 
     fun updateReadingPosition(paragraphIndex: Int, scrollY: Int, scrollPercent: Float) {
