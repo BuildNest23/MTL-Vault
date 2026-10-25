@@ -96,10 +96,20 @@ class ReaderViewModel(
 
     private var loadChapterJob: Job? = null
 
+    // True when the rules changed while TTS was reading this chapter; applied as soon as TTS stops.
+    private var pendingRefresh = false
+
     init {
         loadChapter(initialChapterId)
         ttsManager.onNextChapterRequested = onNextRequested
         ttsManager.onPrevChapterRequested = onPrevRequested
+
+        // If a rule change was held back because TTS was reading, apply it once TTS stops.
+        viewModelScope.launch {
+            ttsManager.playbackInfo.collect {
+                if (pendingRefresh) refreshRenderedContent()
+            }
+        }
 
         // When the novel's rules change (e.g. edited on the Rules screen), re-render the open chapter.
         viewModelScope.launch {
@@ -213,7 +223,11 @@ class ReaderViewModel(
         val info = ttsManager.playbackInfo.value
         val ttsActiveHere = info.chapterId == chapter.id &&
             (info.state == com.example.tts.TtsState.PLAYING || info.state == com.example.tts.TtsState.PAUSED)
-        if (ttsActiveHere) return
+        if (ttsActiveHere) {
+            pendingRefresh = true
+            return
+        }
+        pendingRefresh = false
         _renderedContent.value = repository.getRenderedChapterContent(novelId, chapter)
     }
 
