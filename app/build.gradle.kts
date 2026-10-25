@@ -16,8 +16,8 @@ android {
     applicationId = "com.passionproject.mtlvault"
     minSdk = 24
     targetSdk = 36
-    versionCode = 14
-    versionName = "1.21"
+    versionCode = 15
+    versionName = "1.21.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
