@@ -523,7 +523,7 @@ class AudioPlayerController(
                 if (remaining <= END_OF_CHAPTER_MARGIN_MS && sleep.chapterEnded()) {
                     pause()
                     player.volume = 1f
-                    ChapterNavigator.next(spans, index)?.let { player.seekTo(it.fileIndex, it.startMs) }
+                    ChapterNavigator.next(spans, index)?.let { player.seekTo(it.fileIndex, it.positionMs) }
                 }
             }
         }
