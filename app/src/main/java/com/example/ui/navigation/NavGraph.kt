@@ -230,7 +230,7 @@ fun MtlVaultNavGraph(
                 AudiobooksScreen(
                     viewModel = viewModel,
                     onOpenBook = { bookId ->
-                        navController.navigate(Screen.AudioPlayer.createRoute(bookId, autoPlay = true))
+                        navController.navigate(Screen.AudioPlayer.createRoute(bookId, autoPlay = false))
                     },
                     onAddBook = { navController.navigate(Screen.AddAudiobook.route) }
                 )
@@ -272,7 +272,7 @@ fun MtlVaultNavGraph(
                     onBack = { navController.popBackStack() },
                     onSaved = { bookId ->
                         // Replace the import screen with the player of the new book
-                        navController.navigate(Screen.AudioPlayer.createRoute(bookId, autoPlay = true)) {
+                        navController.navigate(Screen.AudioPlayer.createRoute(bookId, autoPlay = false)) {
                             popUpTo(Screen.Audiobooks.route)
                         }
                     }
