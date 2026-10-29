@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -158,13 +159,14 @@ fun AudioPlayerScreen(
                 .fillMaxWidth()
         ) {
             // The cover takes the width, but never more than 40% of the height on short screens
-            val coverSize = minOf(maxWidth - 64.dp, maxHeight * 0.4f).coerceAtLeast(120.dp)
+            val coverSize = minOf(maxWidth - 64.dp, maxHeight * 0.32f).coerceAtLeast(120.dp)
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
+                    .navigationBarsPadding()
                     .testTag("audio_player_screen"),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
