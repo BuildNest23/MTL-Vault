@@ -198,7 +198,10 @@ class AudioPlaybackService : MediaSessionService() {
     private class ChapterPlayer(private val controller: AudioPlayerController) :
         ForwardingPlayer(controller.player) {
 
-        private val chapterCommands = setOf(
+        // Android 12-16 system controls always show previous / next buttons, so those buttons
+        // are made to skip by time instead of chapter: previous = skip back (15s by default),
+        // next = skip forward (30s by default), using the skip times from the app's settings.
+        private val skipButtons = setOf(
             Player.COMMAND_SEEK_TO_NEXT,
             Player.COMMAND_SEEK_TO_PREVIOUS,
             Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
@@ -207,21 +210,26 @@ class AudioPlaybackService : MediaSessionService() {
 
         override fun getAvailableCommands(): Player.Commands {
             val builder = super.getAvailableCommands().buildUpon()
-            if (controller.state.value.hasBook) chapterCommands.forEach { builder.add(it) }
+            if (controller.state.value.hasBook) {
+                skipButtons.forEach { builder.add(it) }
+                builder.add(Player.COMMAND_SEEK_BACK)
+                builder.add(Player.COMMAND_SEEK_FORWARD)
+            }
             return builder.build()
         }
 
         override fun isCommandAvailable(command: Int): Boolean =
-            if (command in chapterCommands && controller.state.value.hasBook) true
+            if ((command in skipButtons || command == Player.COMMAND_SEEK_BACK ||
+                    command == Player.COMMAND_SEEK_FORWARD) && controller.state.value.hasBook) true
             else super.isCommandAvailable(command)
 
-        override fun hasNextMediaItem(): Boolean = controller.state.value.hasNextChapter
+        override fun hasNextMediaItem(): Boolean = controller.state.value.hasBook
         override fun hasPreviousMediaItem(): Boolean = controller.state.value.hasBook
 
-        override fun seekToNext() = controller.nextChapter()
-        override fun seekToNextMediaItem() = controller.nextChapter()
-        override fun seekToPrevious() = controller.previousChapter()
-        override fun seekToPreviousMediaItem() = controller.previousChapter()
+        override fun seekToNext() = controller.skipForward()
+        override fun seekToNextMediaItem() = controller.skipForward()
+        override fun seekToPrevious() = controller.skipBack()
+        override fun seekToPreviousMediaItem() = controller.skipBack()
 
         override fun seekBack() = controller.skipBack()
         override fun seekForward() = controller.skipForward()
