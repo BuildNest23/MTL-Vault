@@ -105,15 +105,16 @@ class AudioPlaybackService : MediaSessionService() {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null && intent.action == null) {
-            // Satisfies Android's "call startForeground quickly" rule.
-            showStartingNotification()
-            // The app starts this service on every play press. The plain notification above must
-            // not be left on screen over Media3's real one, so ask Media3 to post its media
-            // notification (play/pause, chapters, lock screen) straight away. It uses the same
-            // notification id, so it replaces the plain one.
             val session = mediaSession
-            if (session != null && controller.state.value.hasBook) {
+            val exo = session?.player
+            if (session != null && controller.state.value.hasBook && exo != null && exo.playWhenReady) {
+                // Playback has already begun, so Media3 can post its real media notification
+                // (play/pause, chapters, lock screen) and move the service to the foreground
+                // itself. The plain notification is skipped so the two never swap back and forth.
                 onUpdateNotification(session, true)
+            } else {
+                // Nothing to show yet: still satisfy Android's "call startForeground quickly" rule.
+                showStartingNotification()
             }
         }
         return super.onStartCommand(intent, flags, startId)
