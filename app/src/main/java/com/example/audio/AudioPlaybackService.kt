@@ -1,5 +1,8 @@
 package com.example.audio
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -7,7 +10,10 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.SystemClock
+import androidx.core.app.NotificationCompat
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
 import androidx.media3.session.DefaultMediaNotificationProvider
@@ -54,10 +60,16 @@ class AudioPlaybackService : MediaSessionService() {
         super.onCreate()
         controller = (application as MtlVaultApplication).audioController
 
+        // Android requires a service started with startForegroundService() to show a notification
+        // within a few seconds. The channel is made here and the same id is given to Media3's own
+        // notification, so the real player notification replaces the temporary one below.
+        createNotificationChannel()
         setMediaNotificationProvider(
-            DefaultMediaNotificationProvider.Builder(this).build().apply {
-                setSmallIcon(R.drawable.ic_notification_book)
-            }
+            DefaultMediaNotificationProvider.Builder(this)
+                .setNotificationId(NOTIFICATION_ID)
+                .setChannelId(CHANNEL_ID)
+                .build()
+                .apply { setSmallIcon(R.drawable.ic_notification_book) }
         )
 
         val openApp = PendingIntent.getActivity(
@@ -75,6 +87,68 @@ class AudioPlaybackService : MediaSessionService() {
 
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         watchForShake()
+        watchPlayerState()
+    }
+
+    /**
+     * The app starts this service with a plain intent when playback begins. Promote it to a
+     * foreground service at once, with a simple notification. Without this, Android ends the app
+     * with "did not call startForeground" whenever Media3 has not shown its own notification yet.
+     */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent != null && intent.action == null) showStartingNotification()
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun showStartingNotification() {
+        val title = controller.state.value.title.ifBlank { "Audiobook" }
+        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification_book)
+            .setContentTitle(title)
+            .setContentText("Audiobook player")
+            .setOngoing(true)
+            .setSilent(true)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .build()
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            com.example.logging.AppLogger.e("AudioPlaybackService", "Could not start foreground: ${e.message}", e)
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT < 26) return
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        if (manager.getNotificationChannel(CHANNEL_ID) == null) {
+            manager.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Audiobook playback", NotificationManager.IMPORTANCE_LOW)
+            )
+        }
+    }
+
+    /** Takes the temporary notification away when the book is closed or cannot be played. */
+    private fun watchPlayerState() {
+        scope.launch {
+            controller.state
+                .map { if (!it.hasBook) 0 else if (it.status == PlaybackStatus.ERROR) 1 else 2 }
+                .distinctUntilChanged()
+                .collect { kind ->
+                    when (kind) {
+                        0 -> {
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                            stopSelf()
+                        }
+                        1 -> stopForeground(STOP_FOREGROUND_REMOVE)
+                        else -> Unit
+                    }
+                }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
@@ -188,6 +262,8 @@ class AudioPlaybackService : MediaSessionService() {
 
     private companion object {
         const val SESSION_ID = "mtl_vault_audiobook"
+        const val CHANNEL_ID = "mtl_vault_audiobook_playback"
+        const val NOTIFICATION_ID = 7421
 
         /** A shake counts when the phone is pushed with about three times the force of gravity. */
         const val SHAKE_FORCE = 3.0f
