@@ -84,6 +84,13 @@ class AudioPlaybackService : MediaSessionService() {
             .setId(SESSION_ID)
             .setSessionActivity(openApp)
             .build()
+            .also {
+                // The app drives the player directly and never binds a MediaController, so
+                // onGetSession() is never called. Without this, Media3 does not know the session
+                // belongs to this service and never replaces the plain starting notification with
+                // the real media notification (play/pause, chapters, lock-screen controls).
+                addSession(it)
+            }
 
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         watchForShake()
