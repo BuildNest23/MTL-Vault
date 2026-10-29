@@ -174,7 +174,7 @@ fun LibraryScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Library (${novels.size})",
+                                text = "Novels (${novels.size})",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontFamily = FontFamily.Serif,
                                     fontWeight = FontWeight.Bold,
