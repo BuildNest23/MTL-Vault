@@ -1,6 +1,7 @@
 package com.example.ui.navigation
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -28,7 +29,14 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.MtlVaultApplication
+import com.example.ui.components.AudioMiniPlayer
 import com.example.ui.components.MtlBottomBar
+import com.example.ui.screens.audiobooks.AddAudiobookScreen
+import com.example.ui.screens.audiobooks.AddAudiobookViewModel
+import com.example.ui.screens.audiobooks.AudioPlayerScreen
+import com.example.ui.screens.audiobooks.AudioPlayerViewModel
+import com.example.ui.screens.audiobooks.AudiobooksScreen
+import com.example.ui.screens.audiobooks.AudiobooksViewModel
 import com.example.ui.screens.detail.NovelDetailScreen
 import com.example.ui.screens.detail.NovelDetailViewModel
 import com.example.ui.screens.editor.ChapterEditorScreen
@@ -150,25 +158,41 @@ fun MtlVaultNavGraph(
 
     val showBottomBar = currentRoute in listOf(
         Screen.Library.route,
+        Screen.Audiobooks.route,
         Screen.Stats.route,
         Screen.Settings.route
     )
 
+    // The small audiobook player sits above the tab bar while a book is loaded
+    val audioPlayerState by application.audioController.state.collectAsState()
+
     Scaffold(
         bottomBar = {
-            if (showBottomBar) {
-                MtlBottomBar(
-                    currentRoute = currentRoute,
-                    onNavigate = { route ->
-                        navController.navigate(route) {
-                            popUpTo(Screen.Library.route) {
-                                saveState = true
+            Column {
+                if (showBottomBar) {
+                    AudioMiniPlayer(
+                        state = audioPlayerState,
+                        onOpen = {
+                            audioPlayerState.bookId?.let { id ->
+                                navController.navigate(Screen.AudioPlayer.createRoute(id, autoPlay = false))
                             }
-                            launchSingleTop = true
-                            restoreState = true
+                        },
+                        onPlayPause = { application.audioController.toggle() },
+                        onClose = { application.audioController.close() }
+                    )
+                    MtlBottomBar(
+                        currentRoute = currentRoute,
+                        onNavigate = { route ->
+                            navController.navigate(route) {
+                                popUpTo(Screen.Library.route) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
         }
     ) { innerPadding ->
@@ -192,15 +216,37 @@ fun MtlVaultNavGraph(
                 )
             }
 
-            // Tab 2: Stats
+            // Tab 2: Audiobooks
+            composable(Screen.Audiobooks.route) {
+                val viewModel: AudiobooksViewModel = viewModel(
+                    factory = vmFactory {
+                        AudiobooksViewModel(
+                            application.audioRepository,
+                            application.audioController,
+                            application.audioImporter
+                        )
+                    }
+                )
+                AudiobooksScreen(
+                    viewModel = viewModel,
+                    onOpenBook = { bookId ->
+                        navController.navigate(Screen.AudioPlayer.createRoute(bookId, autoPlay = true))
+                    },
+                    onAddBook = { navController.navigate(Screen.AddAudiobook.route) }
+                )
+            }
+
+            // Tab 3: Stats
             composable(Screen.Stats.route) {
                 val viewModel: StatsViewModel = viewModel(
-                    factory = vmFactory { StatsViewModel(application.novelRepository) }
+                    factory = vmFactory {
+                        StatsViewModel(application.novelRepository, application.audioRepository)
+                    }
                 )
                 StatsScreen(viewModel = viewModel)
             }
 
-            // Tab 3: Settings
+            // Tab 4: Settings
             composable(Screen.Settings.route) {
                 val viewModel: SettingsViewModel = viewModel(
                     factory = vmFactory {
@@ -212,6 +258,55 @@ fun MtlVaultNavGraph(
                     }
                 )
                 SettingsScreen(viewModel = viewModel)
+            }
+
+            // Subview: Add audiobook
+            composable(Screen.AddAudiobook.route) {
+                val viewModel: AddAudiobookViewModel = viewModel(
+                    factory = vmFactory {
+                        AddAudiobookViewModel(application.audioRepository, application.audioImporter)
+                    }
+                )
+                AddAudiobookScreen(
+                    viewModel = viewModel,
+                    onBack = { navController.popBackStack() },
+                    onSaved = { bookId ->
+                        // Replace the import screen with the player of the new book
+                        navController.navigate(Screen.AudioPlayer.createRoute(bookId, autoPlay = true)) {
+                            popUpTo(Screen.Audiobooks.route)
+                        }
+                    }
+                )
+            }
+
+            // Subview: Audiobook player
+            composable(
+                route = Screen.AudioPlayer.route,
+                arguments = listOf(
+                    navArgument("bookId") { type = NavType.StringType },
+                    navArgument("autoPlay") {
+                        type = NavType.BoolType
+                        defaultValue = false
+                    }
+                )
+            ) { backStackEntry ->
+                val bookId = backStackEntry.arguments?.getString("bookId") ?: ""
+                val autoPlay = backStackEntry.arguments?.getBoolean("autoPlay") ?: false
+                val viewModel: AudioPlayerViewModel = viewModel(
+                    factory = vmFactory {
+                        AudioPlayerViewModel(
+                            bookId = bookId,
+                            autoPlay = autoPlay,
+                            repository = application.audioRepository,
+                            controller = application.audioController,
+                            context = application
+                        )
+                    }
+                )
+                AudioPlayerScreen(
+                    viewModel = viewModel,
+                    onBack = { navController.popBackStack() }
+                )
             }
 
             // Subview: Novel Detail
