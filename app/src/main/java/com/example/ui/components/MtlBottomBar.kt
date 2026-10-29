@@ -6,9 +6,11 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,10 +40,17 @@ fun MtlBottomBar(
     val items = listOf(
         NavItem(
             route = Screen.Library.route,
-            title = "Library",
+            title = "Novels",
             selectedIcon = Icons.Filled.AutoStories,
             unselectedIcon = Icons.Outlined.AutoStories,
             testTag = "nav_library"
+        ),
+        NavItem(
+            route = Screen.Audiobooks.route,
+            title = "Audiobooks",
+            selectedIcon = Icons.Filled.Headphones,
+            unselectedIcon = Icons.Outlined.Headphones,
+            testTag = "nav_audiobooks"
         ),
         NavItem(
             route = Screen.Stats.route,
