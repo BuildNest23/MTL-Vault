@@ -131,7 +131,7 @@ class AddAudiobookViewModel(
             try {
                 val draft = work()
                 if (draft.files.isEmpty()) {
-                    importer.discard(draft)
+                    discardDraft(draft)
                     val skipped = draft.skippedNames
                     _state.value = AddAudiobookUiState(
                         error = if (skipped.isEmpty()) {
@@ -179,7 +179,7 @@ class AddAudiobookViewModel(
         if (d.files.size <= 1 || index !in d.files.indices) return
         val removed = d.files[index]
         // Files picked one by one each hold their own permission. A folder holds one for all.
-        if (d.sourceTreeUri == null) importer.releasePermissions(null, listOf(removed.uri))
+        if (d.sourceTreeUri == null) discardDraft(d.copy(files = listOf(removed)))
         editDraft { current ->
             val list = current.files.toMutableList().also { it.removeAt(index) }
             // The chapter count and .cue sheet belonged to the original single file
@@ -235,16 +235,41 @@ class AddAudiobookViewModel(
 
     /** Throws the draft away and goes back to the first step. */
     fun cancel() {
+        // A book that is being saved must not be cancelled half-way
+        if (_state.value.phase == ImportPhase.SAVING) return
         job?.cancel()
-        _state.value.draft?.let { importer.discard(it) }
+        _state.value.draft?.let { discardDraft(it) }
         _state.value = AddAudiobookUiState()
     }
 
-    fun dismissError() = _state.update { it.copy(error = null) }
+    /**
+     * Gives back the read permission of a draft that was not saved, unless a book that is
+     * already in the app still uses the same folder or file.
+     */
+    private fun discardDraft(draft: ImportDraft) {
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                val used = HashSet<String>()
+                for (book in repository.getAllBooks()) {
+                    book.sourceUri?.let { used.add(it) }
+                    repository.getFiles(book.id).forEach { used.add(it.uri) }
+                }
+                val tree = draft.sourceTreeUri
+                if (tree != null) {
+                    if (tree !in used) importer.releasePermissions(tree, emptyList())
+                } else {
+                    importer.releasePermissions(null, draft.files.map { it.uri }.filter { it !in used })
+                }
+            } catch (e: Exception) {
+                // Nothing more can be done. The permission just stays until the app is cleared.
+            }
+        }
+    }
 
+    fun dismissError() = _state.update { it.copy(error = null) }
     override fun onCleared() {
         // Leaving the screen without saving gives the folder permission back
-        if (!finished) _state.value.draft?.let { importer.discard(it) }
+        if (!finished) _state.value.draft?.let { discardDraft(it) }
         super.onCleared()
     }
 }
