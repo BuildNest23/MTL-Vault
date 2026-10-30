@@ -246,6 +246,8 @@ class TtsPlaybackService : Service() {
                     }
                     TtsState.IDLE -> {
                         unregisterBecomingNoisy()
+                        stopForegroundNotification()
+                        stopSelf()
                     }
                     else -> {
                         // INITIALIZING or other states
