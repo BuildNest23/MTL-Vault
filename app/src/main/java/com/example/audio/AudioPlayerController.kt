@@ -112,7 +112,7 @@ class AudioPlayerController(
      * Loads a book and gets it ready at the place the user stopped. If the book is already
      * loaded it is left alone. Pass [play] = true to start playing.
      */
-    suspend fun open(bookId: String, play: Boolean = false) {
+    private val openLock = kotlinx.coroutines.sync.Mutex()      suspend fun open(bookId: String, play: Boolean = false) {         openLock.lock()         try {             openInternal(bookId, play)         } finally {             openLock.unlock()         }     }      private suspend fun openInternal(bookId: String, play: Boolean) {
         if (book?.id == bookId && files.isNotEmpty()) {
             if (play) play()
             return
