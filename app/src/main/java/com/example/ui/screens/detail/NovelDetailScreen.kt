@@ -83,6 +83,7 @@ import com.example.ui.components.MtlActionButton
 import com.example.ui.components.MtlButtonStyle
 import com.example.ui.components.ChapterSplitDialog
 import com.example.ui.components.ConfirmDialog
+import com.example.ui.components.EditNovelDialog
 import com.example.ui.components.EmptyState
 import com.example.ui.components.MtlTopBar
 import com.example.ui.components.PromptDialog
@@ -877,17 +878,22 @@ fun NovelDetailScreen(
     }
 
     if (showEditMetaDialog && currentNovel != null) {
-        PromptDialog(
-            title = "Edit Title",
-            initialValue = currentNovel.title,
-            confirmText = "Save",
-            onConfirm = { newTitle ->
+        EditNovelDialog(
+            title = currentNovel.title,
+            author = currentNovel.author,
+            translator = currentNovel.translator,
+            description = currentNovel.description,
+            coverUri = currentNovel.coverUri,
+            onSave = { newTitle, newAuthor, newTranslator, newDescription, newCover, removeCover ->
                 showEditMetaDialog = false
-                viewModel.updateNovelInfo(
+                viewModel.saveNovelDetails(
+                    context = context,
                     title = newTitle,
-                    author = currentNovel.author,
-                    translator = currentNovel.translator,
-                    description = currentNovel.description
+                    author = newAuthor,
+                    translator = newTranslator,
+                    description = newDescription,
+                    newCover = newCover,
+                    removeCover = removeCover
                 )
             },
             onDismiss = { showEditMetaDialog = false }
