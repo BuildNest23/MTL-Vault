@@ -22,8 +22,10 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 sealed class ReaderEvent {
@@ -90,6 +92,8 @@ class ReaderViewModel(
     private val onNextRequested: () -> Unit = { nextChapter(autoPlay = true) }
     private val onPrevRequested: () -> Unit = { prevChapter(autoPlay = true) }
 
+    private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     // IMPORTANT: keep this init block AFTER every property declaration above. viewModelScope runs on
     // Dispatchers.Main.immediate, so loadChapter() can touch those properties before they are
     // initialized if this block is placed earlier (caused a NullPointerException on opening a chapter).
@@ -103,6 +107,9 @@ class ReaderViewModel(
         loadChapter(initialChapterId)
         ttsManager.onNextChapterRequested = onNextRequested
         ttsManager.onPrevChapterRequested = onPrevRequested
+        if (ttsManager.isPlayingChapter(novelId, initialChapterId)) {
+            ttsManager.onChapterCompleteCallback = onTtsChapterComplete
+        }
 
         // If a rule change was held back because TTS was reading, apply it once TTS stops.
         viewModelScope.launch {
@@ -265,7 +272,7 @@ class ReaderViewModel(
         lastSavedParagraph = lastScrollParagraphIndex
         lastSavedIndex = lastScrollIndex
         lastSavedProgress = lastScrollProgress
-        viewModelScope.launch(Dispatchers.IO) {
+        saveScope.launch {
             com.example.logging.AppLogger.d("ReaderViewModel", "saveCurrentPositionNow: id=${chapter.id}, para=$lastScrollParagraphIndex, scrollY=$lastScrollIndex")
             repository.updateReadingPosition(chapter.id, lastScrollParagraphIndex, lastScrollIndex)
         }
@@ -494,8 +501,8 @@ class ReaderViewModel(
     }
 
     override fun onCleared() {
-        super.onCleared()
         saveCurrentPositionNow()
+        super.onCleared()
         // Only detach callbacks that still belong to this ViewModel (a newer reader may own them now).
         // Leaving the chapter-complete callback empty lets TtsManager keep going in the background.
         if (ttsManager.onNextChapterRequested === onNextRequested) ttsManager.onNextChapterRequested = null
