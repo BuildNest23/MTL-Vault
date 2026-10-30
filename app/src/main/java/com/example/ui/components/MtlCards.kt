@@ -4,7 +4,9 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -57,11 +59,13 @@ private val ChapterNumberRegex = Regex("""(?i)chapter\s*(\d+)""")
  * and a "Ch. N" resume marker showing where you stopped reading.
  * A book with nothing left to read is dimmed.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun NovelCoverCard(
     novel: NovelSummary,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val unread = novel.unreadChapters
@@ -115,7 +119,7 @@ fun NovelCoverCard(
             .alpha(if (finished) 0.55f else 1f)
             .clip(RoundedCornerShape(8.dp))
             .testTag("novel_card_${novel.id}")
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         val bitmap = cover
         if (bitmap != null) {
