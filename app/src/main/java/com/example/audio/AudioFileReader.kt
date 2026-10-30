@@ -174,11 +174,25 @@ class AudioFileReader(context: Context) {
                     if (n <= 0) break
                     total += n
                 }
-                String(buffer, 0, total, Charsets.UTF_8)
+                decodeText(buffer, total)
             }
         } catch (e: Exception) {
             null
         }
+    }
+
+    /** UTF-8 when the bytes are valid UTF-8, otherwise Western-European text. Drops a leading byte order mark. */
+    private fun decodeText(bytes: ByteArray, length: Int): String {
+        val text = try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes, 0, length))
+                .toString()
+        } catch (e: java.nio.charset.CharacterCodingException) {
+            String(bytes, 0, length, Charsets.ISO_8859_1)
+        }
+        return text.removePrefix("\uFEFF")
     }
 
     /** Raw bytes of a picture file, or null if it cannot be read or is too large. */
