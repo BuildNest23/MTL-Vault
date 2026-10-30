@@ -98,7 +98,7 @@ fun AudiobooksScreen(
 ) {
     val shelf by viewModel.uiState.collectAsState()
     val continueBook by viewModel.continueBook.collectAsState()
-    val player by viewModel.player.collectAsState()
+    val nowPlaying by viewModel.nowPlaying.collectAsState()
 
     val snackbarHost = remember { SnackbarHostState() }
     LaunchedEffect(viewModel) {
@@ -161,11 +161,11 @@ fun AudiobooksScreen(
             }
 
             items(shelf.books, key = { it.id }) { book ->
-                val isCurrent = player.bookId == book.id
+                val isCurrent = nowPlaying.bookId == book.id
                 Box {
                     BookTile(
                         book = book,
-                        isPlaying = isCurrent && player.isPlaying,
+                        isPlaying = isCurrent && nowPlaying.isPlaying,
                         onClick = { onOpenBook(book.id) },
                         onLongClick = { menuBook = book }
                     )
