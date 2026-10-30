@@ -212,6 +212,10 @@ fun MtlVaultNavGraph(
                     viewModel = viewModel,
                     onOpenNovel = { novelId ->
                         navController.navigate(Screen.NovelDetail.createRoute(novelId))
+                    },
+                    onOpenReader = { novelId, chapterId ->
+                        navController.navigate(Screen.NovelDetail.createRoute(novelId))
+                        navController.navigate(Screen.Reader.createRoute(novelId, chapterId))
                     }
                 )
             }
