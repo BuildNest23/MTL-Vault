@@ -174,7 +174,9 @@ fun MtlVaultNavGraph(
                         state = audioPlayerState,
                         onOpen = {
                             audioPlayerState.bookId?.let { id ->
-                                navController.navigate(Screen.AudioPlayer.createRoute(id, autoPlay = false)) {                                     launchSingleTop = true                                 }
+                                navController.navigate(Screen.AudioPlayer.createRoute(id, autoPlay = false)) {
+                                    launchSingleTop = true
+                                }
                             }
                         },
                         onPlayPause = { application.audioController.toggle() },
