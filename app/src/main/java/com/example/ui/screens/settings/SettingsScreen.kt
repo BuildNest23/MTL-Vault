@@ -613,8 +613,17 @@ fun SettingsScreen(
                         .padding(vertical = 12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    val appVersion = remember {
+                        try {
+                            context.packageManager
+                                .getPackageInfo(context.packageName, 0)
+                                .versionName ?: ""
+                        } catch (e: Exception) {
+                            ""
+                        }
+                    }
                     Text(
-                        text = "MTL Vault • v1.0",
+                        text = "MTL Vault • v$appVersion",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
