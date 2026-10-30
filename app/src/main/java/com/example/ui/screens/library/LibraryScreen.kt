@@ -63,8 +63,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.model.NovelSummary
 import com.example.importexport.ChapterSplitter
 import com.example.ui.components.ChapterSplitDialog
+import com.example.ui.components.ConfirmDialog
+import com.example.ui.components.EditNovelDialog
 import com.example.ui.components.MtlActionButton
 import com.example.ui.components.MtlButtonStyle
 import com.example.ui.components.EmptyState
@@ -88,7 +91,8 @@ private enum class LibrarySort(val label: String) {
 @Composable
 fun LibraryScreen(
     viewModel: LibraryViewModel,
-    onOpenNovel: (String) -> Unit
+    onOpenNovel: (String) -> Unit,
+    onOpenReader: (novelId: String, chapterId: String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val novels by viewModel.novels.collectAsStateWithLifecycle()
@@ -99,6 +103,11 @@ fun LibraryScreen(
     var filter by rememberSaveable { mutableStateOf(LibraryFilter.ALL) }
     var sort by rememberSaveable { mutableStateOf(LibrarySort.LAST_READ) }
     var showSortMenu by remember { mutableStateOf(false) }
+
+    // Long-press menu: which novel the menu, the editor and the delete question are about
+    var menuNovel by remember { mutableStateOf<NovelSummary?>(null) }
+    var editNovel by remember { mutableStateOf<NovelSummary?>(null) }
+    var deleteNovel by remember { mutableStateOf<NovelSummary?>(null) }
 
     val visibleNovels = remember(novels, filter, sort) {
         val filtered = when (filter) {
@@ -327,10 +336,55 @@ fun LibraryScreen(
                     items = visibleNovels,
                     key = { it.id }
                 ) { novel ->
-                    NovelCoverCard(
-                        novel = novel,
-                        onClick = { onOpenNovel(novel.id) }
-                    )
+                    Box {
+                        NovelCoverCard(
+                            novel = novel,
+                            onClick = { onOpenNovel(novel.id) },
+                            onLongClick = { menuNovel = novel }
+                        )
+                        DropdownMenu(
+                            expanded = menuNovel?.id == novel.id,
+                            onDismissRequest = { menuNovel = null }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Continue reading") },
+                                onClick = {
+                                    menuNovel = null
+                                    viewModel.continueReading(novel) { chapterId ->
+                                        if (chapterId != null) onOpenReader(novel.id, chapterId)
+                                    }
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Edit details") },
+                                onClick = {
+                                    menuNovel = null
+                                    editNovel = novel
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Mark all as read") },
+                                onClick = {
+                                    menuNovel = null
+                                    viewModel.setAllChaptersRead(novel, true)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Mark all as unread") },
+                                onClick = {
+                                    menuNovel = null
+                                    viewModel.setAllChaptersRead(novel, false)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete novel", color = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    menuNovel = null
+                                    deleteNovel = novel
+                                }
+                            )
+                        }
+                    }
                 }
             }
 
@@ -338,6 +392,44 @@ fun LibraryScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+    }
+
+    editNovel?.let { novel ->
+        EditNovelDialog(
+            title = novel.title,
+            author = novel.author,
+            translator = novel.translator,
+            description = novel.description,
+            coverUri = novel.coverUri,
+            onSave = { newTitle, newAuthor, newTranslator, newDescription, newCover, removeCover ->
+                editNovel = null
+                viewModel.saveNovelDetails(
+                    context = context,
+                    novelId = novel.id,
+                    title = newTitle,
+                    author = newAuthor,
+                    translator = newTranslator,
+                    description = newDescription,
+                    newCover = newCover,
+                    removeCover = removeCover
+                )
+            },
+            onDismiss = { editNovel = null }
+        )
+    }
+
+    deleteNovel?.let { novel ->
+        ConfirmDialog(
+            title = "Delete novel?",
+            message = "\"${novel.title}\" and all ${novel.totalChapters} of its chapters will be deleted. This can't be undone.",
+            confirmText = "Delete",
+            isDestructive = true,
+            onConfirm = {
+                deleteNovel = null
+                viewModel.deleteNovel(context, novel)
+            },
+            onDismiss = { deleteNovel = null }
+        )
     }
 
     if (showCreateNovelDialog) {
