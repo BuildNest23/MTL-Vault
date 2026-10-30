@@ -123,7 +123,11 @@ object EpubParser {
                     } catch (e: IllegalArgumentException) {
                         cleanHref
                     }
-                    val fullPath = normalizePath(opfDir + decodedHref)
+                    val fullPath = if (decodedHref.startsWith("/")) {
+                        normalizePath(decodedHref.removePrefix("/"))
+                    } else {
+                        normalizePath(opfDir + decodedHref)
+                    }
 
                     val entry = findZipEntry(zipFile, fullPath) ?: continue
 
@@ -252,10 +256,14 @@ object EpubParser {
         s.trim().trimStart('#').trim().replace(Regex("\\s+"), " ").lowercase()
 
     fun cleanHtmlEntities(input: String): String {
-        if (!input.contains('&')) return input
+        if (!input.contains('&') && !input.contains('\u00A0')) return input
         // "&amp;" is decoded LAST so "&amp;lt;" correctly becomes "&lt;" and not "<".
         var s = input
+            .replace("\u00A0", " ")
             .replace("&nbsp;", " ")
+            .replace("&ensp;", " ")
+            .replace("&emsp;", " ")
+            .replace("&thinsp;", " ")
             .replace("&lt;", "<")
             .replace("&gt;", ">")
             .replace("&quot;", "\"")
@@ -277,7 +285,7 @@ object EpubParser {
         s = s.replace(Regex("&#[xX]([0-9a-fA-F]+);")) { match ->
             codePointToString(match.groupValues[1].toIntOrNull(16), match.value)
         }
-        return s.replace("&amp;", "&")
+        return s.replace("&amp;", "&").replace("\u00A0", " ")
     }
 
     private fun codePointToString(cp: Int?, original: String): String {
@@ -286,11 +294,11 @@ object EpubParser {
     }
 
     private fun findZipEntry(zipFile: ZipFile, targetPath: String): ZipEntry? {
-        val normTarget = normalizePath(targetPath)
+        val normTarget = normalizePath(targetPath).removePrefix("/")
         zipFile.getEntry(normTarget)?.let { return it }
         zipFile.getEntry(normTarget.replace('/', '\\'))?.let { return it }
         return zipFile.entries().asSequence().find { entry ->
-            val normName = normalizePath(entry.name)
+            val normName = normalizePath(entry.name).removePrefix("/")
             normName.equals(normTarget, ignoreCase = true)
         }
     }

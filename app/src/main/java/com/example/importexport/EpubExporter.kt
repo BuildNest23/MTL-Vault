@@ -124,7 +124,8 @@ nav#toc a {
                 manifestItems.append("    <item id=\"$chId\" href=\"$chFile\" media-type=\"application/xhtml+xml\"/>\n")
                 spineItemrefs.append("    <itemref idref=\"$chId\"/>\n")
 
-                val escapedTitle = escapeXml(chapter.title)
+                val displayTitle = chapter.title.ifBlank { "Chapter ${index + 1}" }
+                val escapedTitle = escapeXml(displayTitle)
                 navPoints.append("""
     <navPoint id="navPoint-${index + 1}" playOrder="${index + 1}">
       <navLabel><text>$escapedTitle</text></navLabel>
@@ -132,12 +133,12 @@ nav#toc a {
     </navPoint>
 """.trimIndent()).append("\n")
 
-                val chRtlAttr = if (isRtlText(chapter.title)) " dir=\"rtl\"" else ""
+                val chRtlAttr = if (isRtlText(displayTitle)) " dir=\"rtl\"" else ""
                 navListItems.append("      <li><a href=\"$chFile\"$chRtlAttr>$escapedTitle</a></li>\n")
 
                 // Write chapter XHTML
                 zip.putNextEntry(ZipEntry("OEBPS/$chFile"))
-                val xhtmlContent = buildChapterXhtml(chapter, novelLanguage)
+                val xhtmlContent = buildChapterXhtml(chapter, novelLanguage, displayTitle)
                 zip.write(xhtmlContent.toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
             }
@@ -213,9 +214,9 @@ $spineItemrefs  </spine>
         }
     }
 
-    private fun buildChapterXhtml(chapter: ChapterEntity, defaultLanguage: String): String {
-        val chapterRtl = isRtlText(chapter.title + " " + chapter.content.take(500))
-        val chapterLang = if (chapterRtl) detectLanguage(chapter.title + " " + chapter.content.take(500)) else defaultLanguage
+    private fun buildChapterXhtml(chapter: ChapterEntity, defaultLanguage: String, displayTitle: String): String {
+        val chapterRtl = isRtlText(displayTitle + " " + chapter.content.take(500))
+        val chapterLang = if (chapterRtl) detectLanguage(displayTitle + " " + chapter.content.take(500)) else defaultLanguage
 
         val paragraphs = chapter.content.lines()
             .map { it.trim() }
@@ -226,18 +227,19 @@ $spineItemrefs  </spine>
                 "<p$dirAttr>${escapeXml(para)}</p>"
             }
 
-        val h1DirAttr = if (isRtlText(chapter.title)) " dir=\"rtl\"" else ""
+        val h1DirAttr = if (isRtlText(displayTitle)) " dir=\"rtl\"" else ""
+        val escapedTitle = escapeXml(displayTitle)
 
         return """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="$chapterLang" lang="$chapterLang"${if (chapterRtl) " dir=\"rtl\"" else ""}>
   <head>
     <meta charset="utf-8"/>
-    <title>${escapeXml(chapter.title)}</title>
+    <title>$escapedTitle</title>
     <link rel="stylesheet" type="text/css" href="stylesheet.css"/>
   </head>
   <body>
-    <h1$h1DirAttr>${escapeXml(chapter.title)}</h1>
+    <h1$h1DirAttr>$escapedTitle</h1>
 $paragraphs
   </body>
 </html>""".trimIndent()
