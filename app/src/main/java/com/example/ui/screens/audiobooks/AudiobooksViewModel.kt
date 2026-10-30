@@ -77,8 +77,8 @@ class AudiobooksViewModel(
      * deleted, and the read permission Android kept for the folder or files is given back,
      * unless another book in the app uses the same folder or file.
      */
-    fun deleteBook(book: AudioBookEntity) {
-        viewModelScope.launch {
+        fun deleteBook(book: AudioBookEntity) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             if (controller.state.value.bookId == book.id) controller.close()
 
             val files = repository.getFiles(book.id)
