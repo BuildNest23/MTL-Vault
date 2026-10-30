@@ -60,6 +60,10 @@ interface ChapterDao {
     @Query("UPDATE chapters SET read = :read, readAt = :readAt WHERE id = :chapterId")
     suspend fun updateReadStatus(chapterId: String, read: Boolean, readAt: Long?)
 
+    /** Marks every chapter of a novel read or unread in one go. */
+    @Query("UPDATE chapters SET read = :read, readAt = :readAt WHERE novelId = :novelId")
+    suspend fun updateReadStatusForNovel(novelId: String, read: Boolean, readAt: Long?)
+
     @Query("UPDATE chapters SET scrollPosition = :position WHERE id = :chapterId")
     suspend fun updateScrollPosition(chapterId: String, position: Int)
 
