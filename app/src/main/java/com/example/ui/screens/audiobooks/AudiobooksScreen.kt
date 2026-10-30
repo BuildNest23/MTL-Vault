@@ -192,7 +192,7 @@ fun AudiobooksScreen(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Remove from app", color = MaterialTheme.colorScheme.error) },
+                            text = { Text("Remove Audiobook", color = MaterialTheme.colorScheme.error) },
                             onClick = {
                                 menuBook = null
                                 removeBook = book
