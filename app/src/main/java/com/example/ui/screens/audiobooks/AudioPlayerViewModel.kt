@@ -8,7 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.audio.AudioFileReader
 import com.example.audio.AudioPlayerController
 import com.example.audio.AudioPlayerSettings
-import kotlinx.coroutines.flow.distinctUntilChanged
+import com.example.audio.AudioPlayerUiState
 import com.example.audio.ChapterNavigator
 import com.example.audio.ChapterSpan
 import com.example.data.database.entities.AudioBookEntity
@@ -48,13 +48,8 @@ class AudioPlayerViewModel(
 
     // ------------------------------------------------------------------ What the screen shows
 
-    data class NowPlaying(val bookId: String? = null, val isPlaying: Boolean = false)
-
-    /** Which book is playing. Only changes when that changes, not every half second. */
-    val nowPlaying: StateFlow<NowPlaying> = controller.state
-        .map { NowPlaying(it.bookId, it.isPlaying) }
-        .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NowPlaying())
+    /** The player's state, but only while it is this screen's book. Until then it is an empty state. */
+    val player: StateFlow<AudioPlayerUiState> = controller.state
         .map { if (it.bookId == bookId) it else AudioPlayerUiState() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AudioPlayerUiState())
 

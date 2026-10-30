@@ -4,12 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.AudioImporter
 import com.example.audio.AudioPlayerController
-import com.example.audio.AudioPlayerUiState
 import com.example.data.database.entities.AudioBookEntity
 import com.example.data.repository.AudioRepository
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.map
@@ -43,8 +43,13 @@ class AudiobooksViewModel(
     val continueBook: StateFlow<AudioBookEntity?> = repository.observeContinueBook()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    /** The player's state, so the shelf can show which book is playing right now. */
-    val player: StateFlow<AudioPlayerUiState> = controller.state
+    data class NowPlaying(val bookId: String? = null, val isPlaying: Boolean = false)
+
+    /** Which book is playing. Only changes when that changes, not every half second. */
+    val nowPlaying: StateFlow<NowPlaying> = controller.state
+        .map { NowPlaying(it.bookId, it.isPlaying) }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NowPlaying())
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
 
@@ -77,8 +82,8 @@ class AudiobooksViewModel(
      * deleted, and the read permission Android kept for the folder or files is given back,
      * unless another book in the app uses the same folder or file.
      */
-        fun deleteBook(book: AudioBookEntity) {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+    fun deleteBook(book: AudioBookEntity) {
+        viewModelScope.launch {
             if (controller.state.value.bookId == book.id) controller.close()
 
             val files = repository.getFiles(book.id)
