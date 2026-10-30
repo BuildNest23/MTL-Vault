@@ -28,10 +28,6 @@ import java.util.Locale
 class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     companion object {
-        const val CHANNEL_ID = "tts_media_channel"
-        const val NOTIFICATION_ID = 1001
-        const val CHUNK_UNIT_MS = 10_000L
-
         /**
          * Single source of truth for splitting text into paragraphs across ReaderScreen and TtsManager.
          * Ensures a strict 1-to-1 match between UI paragraphs and TTS chunks so highlights are never misaligned.
@@ -262,9 +258,14 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 engine.setPitch(speechPitch)
 
                 if (selectedVoiceName != null) {
-                    engine.voices?.find { it.name == selectedVoiceName }?.let {
-                        engine.voice = it
-                        AppLogger.i("TtsManager", "Restored voice: ${it.name}")
+                    try {
+                        engine.voices?.find { it.name == selectedVoiceName }?.let {
+                            engine.voice = it
+                            AppLogger.i("TtsManager", "Restored voice: ${it.name}")
+                        }
+                    } catch (e: Exception) {
+                        // Some engines throw when asked for their voices. Keep the default voice.
+                        AppLogger.w("TtsManager", "Could not restore voice: ${e.localizedMessage}")
                     }
                 }
 
@@ -437,10 +438,17 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 AppLogger.e("TtsManager", "onError deprecated: utteranceId=$utteranceId")
+                if (utteranceId != null && utteranceId.startsWith("ch_") && utteranceId != activeUtteranceId) return
                 handleUtteranceError("Synthesis error on $utteranceId", TextToSpeech.ERROR)
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
+                // A sentence that was already replaced (double tap, seek) can report an error late.
+                // Without this check it made the reader skip the paragraph that was just started.
+                if (utteranceId != null && utteranceId.startsWith("ch_") && utteranceId != activeUtteranceId) {
+                    AppLogger.d("TtsManager", "onError ignored (stale): $utteranceId, active=$activeUtteranceId")
+                    return
+                }
                 val msg = when (errorCode) {
                     TextToSpeech.ERROR_SYNTHESIS -> "Synthesis error"
                     TextToSpeech.ERROR_SERVICE -> "TTS service error"
@@ -575,14 +583,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         maxChars: Int = Int.MAX_VALUE,
         onChapterComplete: (() -> Unit)? = null
     ) {
+        // prepareChapter splits the text (same 1-to-1 paragraphs as the screen) and stores the chapter info
         prepareChapter(novelId, chapterId, chapterTitle, content, maxChars, onChapterComplete)
-        currentChapterId = chapterId
-        currentChapterTitle = chapterTitle
-        currentMaxChars = maxChars
-        onChapterCompleteCallback = onChapterComplete
-
-        // Strict 1-to-1 match with UI paragraphs
-        chunks = parseParagraphs(content, maxChars)
         currentChunkIndex = startFromChunkIndex.coerceIn(0, (chunks.size - 1).coerceAtLeast(0))
         lastAdvancedChunk = currentChunkIndex - 1
 
@@ -785,6 +787,9 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 isSpeakingActive = true
                 TtsPlaybackService.start(context)
                 prepareAndSpeakChunk(paraIndex, effectiveStartOffset)
+            } else {
+                AppLogger.w("TtsManager", "playFromSentence: audio focus denied")
+                _playbackInfo.value = _playbackInfo.value.copy(state = TtsState.PAUSED)
             }
         }
     }
@@ -964,9 +969,13 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     fun setVoice(voiceName: String) {
         selectedVoiceName = voiceName
         val engine = tts ?: return
-        val target = engine.voices?.find { it.name == voiceName }
-        if (target != null) {
-            engine.voice = target
+        try {
+            val target = engine.voices?.find { it.name == voiceName }
+            if (target != null) {
+                engine.voice = target
+            }
+        } catch (e: Exception) {
+            AppLogger.w("TtsManager", "Could not set voice: ${e.localizedMessage}")
         }
     }
 
