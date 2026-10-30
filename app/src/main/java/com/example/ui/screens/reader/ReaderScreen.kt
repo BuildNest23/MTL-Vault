@@ -401,10 +401,6 @@ fun ReaderScreen(
         }
     }
 
-    val paragraphSentences = remember(paragraphs) {
-        paragraphs.map { SentenceSplitter.splitIntoSentences(it) }
-    }
-
     val onSentenceBoundsMeasured: (Int, Float, Float) -> Unit = remember(lazyListState) {
         { paraIdx, sTop, sBottom ->
           if (!userIsScrolling()) {
@@ -532,7 +528,9 @@ fun ReaderScreen(
                 key = { paraIndex -> "para_$paraIndex" }
             ) { paraIndex ->
                 val paragraph = paragraphs[paraIndex]
-                val sentences = paragraphSentences.getOrNull(paraIndex) ?: emptyList()
+                // Split one paragraph at a time, only when it is on screen. Splitting the whole chapter
+                // up front blocked the main thread for a moment every time a long chapter opened.
+                val sentences = remember(paragraph) { SentenceSplitter.splitIntoSentences(paragraph) }
 
                 ReaderParagraphItem(
                     paraIndex = paraIndex,
