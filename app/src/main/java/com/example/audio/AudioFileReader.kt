@@ -28,8 +28,7 @@ data class AudioTags(
     val artist: String = "",
     val albumArtist: String = "",
     val album: String = "",
-    val composer: String = "",
-    val hasEmbeddedCover: Boolean = false
+        val composer: String = ""
 )
 
 /**
@@ -134,8 +133,7 @@ class AudioFileReader(context: Context) {
                 artist = field(MediaMetadataRetriever.METADATA_KEY_ARTIST),
                 albumArtist = field(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST),
                 album = field(MediaMetadataRetriever.METADATA_KEY_ALBUM),
-                composer = field(MediaMetadataRetriever.METADATA_KEY_COMPOSER),
-                hasEmbeddedCover = retriever.embeddedPicture != null
+                composer = field(MediaMetadataRetriever.METADATA_KEY_COMPOSER)
             )
         } catch (e: Exception) {
             AudioTags()
