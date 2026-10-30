@@ -312,7 +312,7 @@ class LibraryViewModel(
                     // Read off the main thread; strip a UTF-8 BOM so the first heading is still detected
                     val content = withContext(Dispatchers.IO) {
                         context.contentResolver.openInputStream(uri)?.use { input ->
-                            input.bufferedReader(Charsets.UTF_8).readText()
+                            com.example.importexport.TextFileDecoder.decode(input.readBytes())
                         } ?: ""
                     }.removePrefix("\uFEFF")
 
