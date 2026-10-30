@@ -48,8 +48,13 @@ class AudioPlayerViewModel(
 
     // ------------------------------------------------------------------ What the screen shows
 
-    /** The player's state, but only while it is this screen's book. Until then it is an empty state. */
-    val player: StateFlow<AudioPlayerUiState> = controller.state
+        data class NowPlaying(val bookId: String? = null, val isPlaying: Boolean = false)
+
+    /** Which book is playing. Only changes when that changes, not every half second. */
+    val nowPlaying: StateFlow<NowPlaying> = controller.state
+        .map { NowPlaying(it.bookId, it.isPlaying) }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NowPlaying())
         .map { if (it.bookId == bookId) it else AudioPlayerUiState() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AudioPlayerUiState())
 
