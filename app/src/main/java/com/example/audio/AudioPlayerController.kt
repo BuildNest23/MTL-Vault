@@ -457,8 +457,17 @@ class AudioPlayerController(
 
         override fun onPlayerError(playbackError: PlaybackException) {
             val name = files.getOrNull(player.currentMediaItemIndex)?.displayName ?: "the audio file"
-            missingFileName = name
-            error = "Can't play $name. It may have been moved, renamed or deleted."
+            val fileGone = playbackError.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
+                playbackError.errorCode == PlaybackException.ERROR_CODE_IO_NO_PERMISSION ||
+                playbackError.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED
+            if (fileGone) {
+                missingFileName = name
+                error = "Can't play $name. It may have been moved, renamed or deleted."
+            } else {
+                missingFileName = null
+                error = "Can't play $name. The file may be damaged or in a format this phone can't play."
+            }
+            com.example.logging.AppLogger.e("AudioPlayer", "Playback error ${playbackError.errorCodeName}", playbackError)
             publish()
         }
     }
