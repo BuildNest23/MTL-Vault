@@ -48,7 +48,7 @@ class AudioPlayerViewModel(
 
     // ------------------------------------------------------------------ What the screen shows
 
-        data class NowPlaying(val bookId: String? = null, val isPlaying: Boolean = false)
+    data class NowPlaying(val bookId: String? = null, val isPlaying: Boolean = false)
 
     /** Which book is playing. Only changes when that changes, not every half second. */
     val nowPlaying: StateFlow<NowPlaying> = controller.state
