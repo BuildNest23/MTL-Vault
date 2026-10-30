@@ -234,7 +234,9 @@ fun MtlVaultNavGraph(
                 AudiobooksScreen(
                     viewModel = viewModel,
                     onOpenBook = { bookId ->
-                        navController.navigate(Screen.AudioPlayer.createRoute(bookId, autoPlay = false))
+                        navController.navigate(Screen.AudioPlayer.createRoute(bookId, autoPlay = false)) {
+                            launchSingleTop = true
+                        }
                     },
                     onAddBook = { navController.navigate(Screen.AddAudiobook.route) }
                 )
