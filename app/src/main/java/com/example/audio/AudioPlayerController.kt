@@ -1,5 +1,6 @@
 package com.example.audio
 
+import kotlinx.coroutines.sync.withLock
 import android.content.Context
 import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
@@ -103,6 +104,7 @@ class AudioPlayerController(
     private var pausedAtWall = 0L          // wall-clock time of the last pause, 0 if unknown
     private var enhancer: LoudnessEnhancer? = null
     private val checkedDurations = HashSet<String>()
+    private val openLock = kotlinx.coroutines.sync.Mutex()   // stops two open() calls running at once
 
     private data class BookMeta(val title: String, val author: String, val coverUri: String?)
 
@@ -112,7 +114,11 @@ class AudioPlayerController(
      * Loads a book and gets it ready at the place the user stopped. If the book is already
      * loaded it is left alone. Pass [play] = true to start playing.
      */
-    private val openLock = kotlinx.coroutines.sync.Mutex()      suspend fun open(bookId: String, play: Boolean = false) {         openLock.lock()         try {             openInternal(bookId, play)         } finally {             openLock.unlock()         }     }      private suspend fun openInternal(bookId: String, play: Boolean) {
+    suspend fun open(bookId: String, play: Boolean = false) {
+        openLock.withLock { openInternal(bookId, play) }
+    }
+
+    private suspend fun openInternal(bookId: String, play: Boolean) {
         if (book?.id == bookId && files.isNotEmpty()) {
             if (play) play()
             return

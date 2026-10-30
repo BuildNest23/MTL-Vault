@@ -28,7 +28,7 @@ data class AudioTags(
     val artist: String = "",
     val albumArtist: String = "",
     val album: String = "",
-        val composer: String = ""
+    val composer: String = ""
 )
 
 /**
