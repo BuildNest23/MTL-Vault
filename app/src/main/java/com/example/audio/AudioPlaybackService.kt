@@ -235,7 +235,10 @@ class AudioPlaybackService : MediaSessionService() {
         unregisterShake()
         scope.cancel()
         // Only the session is released here. The player belongs to AudioPlayerController.
-        mediaSession?.release()
+        mediaSession?.run {
+            removeSession(this)
+            release()
+        }
         mediaSession = null
         super.onDestroy()
     }

@@ -95,6 +95,7 @@ class AudioPlayerController(
     private var everReady = false
 
     private val sleep = SleepTimerLogic()
+    private var sleepTargetChapterIndex: Int = -1
     private val tracker = ListeningTracker()
 
     private var observeJob: Job? = null
@@ -176,10 +177,17 @@ class AudioPlayerController(
                 .build()
         }
         val exo = player
-        exo.setMediaItems(items, startFileIndex.coerceIn(0, items.lastIndex), startPositionMs.coerceAtLeast(0L))
+        if (items.isEmpty()) {
+            exo.clearMediaItems()
+            return
+        }
+        val safeIndex = startFileIndex.coerceIn(0, items.lastIndex)
+        val safePosition = startPositionMs.coerceAtLeast(0L)
+        exo.setMediaItems(items, safeIndex, safePosition)
         exo.setPlaybackSpeed(speed)
         exo.volume = 1f
         exo.prepare()
+        applyVolumeBoost()
     }
 
     /** Keeps chapters, files and the book's name up to date while the book is open. */
@@ -213,6 +221,11 @@ class AudioPlayerController(
         tickJob?.cancel()
         observeJob?.cancel()
         sleep.cancel()
+        sleepTargetChapterIndex = -1
+        try {
+            enhancer?.release()
+        } catch (_: Exception) {}
+        enhancer = null
         player.stop()
         player.clearMediaItems()
         book = null
@@ -291,7 +304,14 @@ class AudioPlayerController(
 
     /** Jumps to the start of a chapter by its position in the chapter list. */
     fun playChapter(chapterIndex: Int) {
-        spans.getOrNull(chapterIndex)?.let { seekTo(PlayTarget(it.fileIndex, it.startMs)) }
+        if (sleep.state.kind == SleepKind.END_OF_CHAPTER) {
+            sleepTargetChapterIndex = chapterIndex
+        }
+        spans.getOrNull(chapterIndex)?.let {
+            seekTo(PlayTarget(it.fileIndex, it.startMs))
+            pausedAtWall = 0L   // the listener chose this spot, so no smart rewind into the last chapter
+            play()
+        }
     }
 
     /** Moves inside the current chapter. [elapsedMs] counts from the start of the chapter. */
@@ -322,17 +342,20 @@ class AudioPlayerController(
     // ================================================================== Sleep timer
 
     fun startSleepTimer(minutes: Int) {
+        sleepTargetChapterIndex = -1
         sleep.startTimed(minutes)
         publish()
     }
 
     fun startSleepAtChapterEnd() {
+        sleepTargetChapterIndex = currentChapterIndex()
         sleep.startEndOfChapter()
         publish()
     }
 
     fun cancelSleepTimer() {
         sleep.cancel()
+        sleepTargetChapterIndex = -1
         player.volume = 1f
         publish()
     }
@@ -341,6 +364,8 @@ class AudioPlayerController(
     fun extendSleepTimer(): Boolean {
         val extended = sleep.extend(_settings.value.sleepExtendMinutes)
         if (extended) {
+            // When extending an end-of-chapter timer, it converts to a timed timer
+            sleepTargetChapterIndex = -1
             player.volume = 1f
             publish()
         }
@@ -501,7 +526,17 @@ class AudioPlayerController(
         if (real == C.TIME_UNSET || real <= 0L) return
         if (kotlin.math.abs(real - file.durationMs) < 1_000L) return
         if (!checkedDurations.add(file.id)) return
-        scope.launch { repository.correctFileDuration(current.id, file.id, real) }
+        scope.launch {
+            repository.correctFileDuration(current.id, file.id, real)
+            // The listener may have switched books while the database was working
+            if (book?.id != current.id) return@launch
+            files = files.map { if (it.id == file.id) it.copy(durationMs = real) else it }
+            val fresh = ChapterNavigator.spansOf(repository.getChapters(current.id), files)
+            if (book?.id == current.id) {
+                spans = fresh
+                publish()
+            }
+        }
     }
 
     // ================================================================== Ticking
@@ -531,20 +566,32 @@ class AudioPlayerController(
 
         // "End of chapter" timer: stop just before the chapter ends, parked at the start of the next one.
         if (sleep.state.kind == SleepKind.END_OF_CHAPTER && player.isPlaying) {
-            val index = currentChapterIndex()
-            val span = spans.getOrNull(index)
-            if (span != null && span.durationMs > 0L) {
-                val remaining = ChapterNavigator.remainingInChapter(span, player.currentMediaItemIndex, player.currentPosition)
-                if (remaining <= END_OF_CHAPTER_MARGIN_MS && sleep.chapterEnded()) {
-                    pause()
-                    player.volume = 1f
-                    ChapterNavigator.next(spans, index)?.let { player.seekTo(it.fileIndex, it.positionMs) }
-                }
+            val currentIndex = currentChapterIndex()
+            val targetIndex = if (sleepTargetChapterIndex >= 0) sleepTargetChapterIndex else currentIndex
+            val targetSpan = spans.getOrNull(targetIndex)
+            val currentFileIdx = player.currentMediaItemIndex
+            val currentPos = player.currentPosition
+
+            // Effective threshold scales with playback speed (e.g., 2.0x speed travels twice as fast per tick)
+            val effectiveMargin = (END_OF_CHAPTER_MARGIN_MS * speed.coerceAtLeast(1.0f)).toLong() + (TICK_MS * speed).toLong()
+            val hasAdvancedPastTarget = currentIndex > targetIndex || (targetSpan != null && (currentFileIdx > targetSpan.fileIndex || (currentFileIdx == targetSpan.fileIndex && currentPos >= targetSpan.endMs)))
+            val remainingInTarget = if (targetSpan != null) ChapterNavigator.remainingInChapter(targetSpan, currentFileIdx, currentPos) else Long.MAX_VALUE
+
+            if ((hasAdvancedPastTarget || remainingInTarget <= effectiveMargin) && sleep.chapterEnded()) {
+                pause()
+                player.volume = 1f
+                sleepTargetChapterIndex = -1
+                ChapterNavigator.next(spans, targetIndex)?.let { player.seekTo(it.fileIndex, it.positionMs) }
             }
         }
 
         if (sleep.isActive) {
-            val span = spans.getOrNull(currentChapterIndex())
+            val targetIdx = if (sleep.state.kind == SleepKind.END_OF_CHAPTER && sleepTargetChapterIndex >= 0) {
+                sleepTargetChapterIndex
+            } else {
+                currentChapterIndex()
+            }
+            val span = spans.getOrNull(targetIdx)
             val remaining = if (span != null) {
                 ChapterNavigator.remainingInChapter(span, player.currentMediaItemIndex, player.currentPosition)
             } else {
@@ -600,8 +647,9 @@ class AudioPlayerController(
         val status = when {
             error != null -> PlaybackStatus.ERROR
             exo.playbackState == Player.STATE_ENDED -> PlaybackStatus.ENDED
-            exo.playbackState == Player.STATE_BUFFERING && !everReady -> PlaybackStatus.LOADING
-            exo.playWhenReady -> PlaybackStatus.PLAYING
+            exo.playbackState == Player.STATE_BUFFERING -> PlaybackStatus.LOADING
+            exo.playbackState == Player.STATE_IDLE && (exo.playWhenReady || !everReady) -> PlaybackStatus.LOADING
+            exo.isPlaying || (exo.playWhenReady && exo.playbackState == Player.STATE_READY) -> PlaybackStatus.PLAYING
             else -> PlaybackStatus.PAUSED
         }
 
