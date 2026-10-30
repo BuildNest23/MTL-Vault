@@ -99,10 +99,10 @@ class NovelRepository(
 
     suspend fun deleteNovel(novelId: String) = withContext(Dispatchers.IO) {
         val runBlock: suspend () -> Unit = {
-            val chapters = chapterDao.getChaptersForNovelSync(novelId)
             chapterDao.deleteChaptersForNovel(novelId)
             novelDao.deleteNovelById(novelId)
-            chapters.forEach { ReplacementEngine.invalidateChapter(it.id) }
+            // Forget the cached text without loading every chapter of the novel into memory first
+            ReplacementEngine.invalidateCache()
         }
         if (database != null) {
             database.withTransaction { runBlock() }
@@ -180,8 +180,7 @@ class NovelRepository(
             val novel = novelDao.getNovelByIdSync(novelId)
             val idSet = ids.toSet()
             if (novel != null && novel.lastChapterId != null && idSet.contains(novel.lastChapterId)) {
-                val remaining = chapterDao.getChaptersForNovelSync(novelId)
-                val fallbackChapterId = remaining.lastOrNull()?.id
+                val fallbackChapterId = chapterDao.getLastChapterId(novelId)
                 novelDao.updateLastChapter(novelId, fallbackChapterId)
             }
 
