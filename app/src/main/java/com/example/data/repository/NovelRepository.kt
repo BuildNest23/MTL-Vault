@@ -210,6 +210,11 @@ class NovelRepository(
         chapterDao.updateReadStatus(chapterId, read, if (read) System.currentTimeMillis() else null)
     }
 
+    /** Marks every chapter of a novel as read (true) or unread (false). */
+    suspend fun setAllChaptersRead(novelId: String, read: Boolean) = withContext(Dispatchers.IO) {
+        chapterDao.updateReadStatusForNovel(novelId, read, if (read) System.currentTimeMillis() else null)
+    }
+
     suspend fun updateScrollPosition(chapterId: String, position: Int) = withContext(Dispatchers.IO) {
         chapterDao.updateScrollPosition(chapterId, position)
     }
