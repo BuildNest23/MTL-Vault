@@ -478,6 +478,18 @@ class ReaderViewModel(
         }
     }
 
+    fun setUseEdgeVoices(useEdge: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore.updateTtsEngine(if (useEdge) "edge" else "")
+        }
+    }
+
+    fun setEdgeVoice(voice: String) {
+        viewModelScope.launch {
+            settingsDataStore.updateEdgeVoice(voice)
+        }
+    }
+
     fun updateSettings(newSettings: ReaderSettings) {
         viewModelScope.launch {
             settingsDataStore.saveAllSettings(newSettings)

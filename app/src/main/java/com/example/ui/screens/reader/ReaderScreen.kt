@@ -737,7 +737,11 @@ fun ReaderScreen(
                 onPrevChapter = { viewModel.prevChapter() },
                 onNextChapter = { viewModel.nextChapter() },
                 onRateChange = { viewModel.setTtsRate(it) },
-                onPitchChange = { viewModel.setTtsPitch(it) }
+                onPitchChange = { viewModel.setTtsPitch(it) },
+                useEdge = settings.ttsEngine == "edge",
+                edgeVoice = settings.edgeVoice,
+                onUseEdgeChange = { viewModel.setUseEdgeVoices(it) },
+                onEdgeVoiceChange = { viewModel.setEdgeVoice(it) }
             )
         }
     }
