@@ -82,14 +82,40 @@ class AudioPlayerViewModel(
 
     // ------------------------------------------------------------------ Playback
 
-    fun playPause() = controller.toggle()
-    fun skipBack() = controller.skipBack()
-    fun skipForward() = controller.skipForward()
-    fun nextChapter() = controller.nextChapter()
-    fun previousChapter() = controller.previousChapter()
-    fun playChapter(index: Int) = controller.playChapter(index)
-    fun seekInChapter(elapsedMs: Long) = controller.seekInChapter(elapsedMs)
-    fun setSpeed(speed: Float) = controller.setSpeed(speed)
+    /**
+     * True while the controller has this screen's book loaded. It turns false when the book is
+     * closed from outside (the X on the notification) while this screen is still open.
+     */
+    private fun isBookLoaded(): Boolean = controller.state.value.bookId == bookId
+
+    /** Loads the book again if it was closed behind this screen's back, then runs [action]. */
+    private fun withBook(action: () -> Unit) {
+        if (isBookLoaded()) {
+            action()
+        } else {
+            viewModelScope.launch {
+                controller.open(bookId, play = false)
+                action()
+            }
+        }
+    }
+
+    fun playPause() {
+        if (isBookLoaded()) {
+            controller.toggle()
+        } else {
+            // Closed from the notification: load it again and start playing.
+            viewModelScope.launch { controller.open(bookId, play = true) }
+        }
+    }
+
+    fun skipBack() = withBook { controller.skipBack() }
+    fun skipForward() = withBook { controller.skipForward() }
+    fun nextChapter() = withBook { controller.nextChapter() }
+    fun previousChapter() = withBook { controller.previousChapter() }
+    fun playChapter(index: Int) = withBook { controller.playChapter(index) }
+    fun seekInChapter(elapsedMs: Long) = withBook { controller.seekInChapter(elapsedMs) }
+    fun setSpeed(speed: Float) = withBook { controller.setSpeed(speed) }
 
     // ------------------------------------------------------------------ Sleep timer
 
