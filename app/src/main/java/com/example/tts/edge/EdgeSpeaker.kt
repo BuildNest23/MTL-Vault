@@ -2,6 +2,8 @@ package com.example.tts.edge
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.media.MediaPlayer
 import android.os.PowerManager
 import kotlinx.coroutines.CancellationException
@@ -13,6 +15,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Semaphore
@@ -38,7 +42,29 @@ import kotlin.math.roundToInt
 private const val QUEUE_PARALLEL = 3
 private const val QUEUE_MAX_FAILURES = 3
 
-class EdgeSpeaker(context: Context) {
+/** How many sentences are downloaded ahead when the full-chapter download is switched off. */
+private const val RESTRICTED_LOOKAHEAD = 3
+
+/** What the download ring in the player bar shows about the current chapter. */
+data class EdgeProgress(
+    /** Total sentences the voice will speak in this chapter (0 = nothing to show). */
+    val total: Int = 0,
+    /** Sentences whose audio is on disk. */
+    val done: Int = 0,
+    /** Disk space used by this chapter's audio. */
+    val bytes: Long = 0L,
+    /** Position of the sentence being spoken, 0..total. */
+    val currentIndex: Int = 0,
+    /** The download gave up (probably offline). It tries again at the next sentence. */
+    val stalled: Boolean = false,
+    /** Only a few sentences ahead are downloaded because "Wi-Fi only" is on and Wi-Fi is not available. */
+    val waitingForWifi: Boolean = false
+)
+
+class EdgeSpeaker(
+    context: Context,
+    private val progressSink: MutableStateFlow<EdgeProgress>? = null
+) {
 
     interface Callback {
         fun onStart(id: String)
@@ -71,11 +97,25 @@ class EdgeSpeaker(context: Context) {
 
     // Chapter download queue (see syncQueue). queueChapter / queueParams are main-thread only;
     // trackedFiles is guarded by its own lock and holds the cache files that belong to the chapter.
-    private var queueJob: Job? = null
+    @Volatile private var queueJob: Job? = null
     private var queueChapter: String? = null
     private var queueParams: Params? = null
     private val trackedFiles = HashSet<String>()
     private var pendingCleanup = false
+
+    /** When true, the full-chapter download only runs on an unmetered network (Wi-Fi). */
+    @Volatile
+    var wifiOnly = false
+
+    // The chapter the user cleared by hand: only a few sentences ahead are downloaded for it.
+    private var suspendedChapter: String? = null
+
+    // Data behind the progress ring.
+    @Volatile private var progressFiles: List<File> = emptyList()
+    @Volatile private var progressStart = 0
+    @Volatile private var progressStalled = false
+    @Volatile private var progressWaitingForWifi = false
+    private var progressJob: Job? = null
 
     // Small file that remembers which cached sentences belong to the chapter being read, so the
     // old chapter can still be cleaned up after the app was closed or killed.
@@ -128,26 +168,38 @@ class EdgeSpeaker(context: Context) {
     }
 
     /**
-     * Keeps the whole rest of the chapter downloading in the background, in reading order.
-     * [texts] must start with the sentence that is being spoken now and continue to the end of
-     * the chapter. Call it for every sentence: it restarts the queue from the current position
-     * (so jumps, voice / speed changes and new chapters are handled automatically), and sentences
-     * that are already on disk are skipped in a blink.
+     * Keeps the chapter downloading in the background, in reading order.
+     * [texts] is the WHOLE chapter in reading order and [startIndex] is the sentence being spoken
+     * now. Everything from there to the end is downloaded. Call it for every sentence: it restarts
+     * the queue from the current position (so jumps, voice / speed changes and new chapters are
+     * handled automatically), and sentences that are already on disk are skipped in a blink.
      *
      * When [chapterKey] or the voice / rate / pitch changes, audio of the previous chapter that
-     * is not needed any more is deleted.
+     * is not needed any more is deleted. The same call keeps the progress ring up to date.
      */
-    fun syncQueue(chapterKey: String, texts: List<String>, voice: String, rate: Float, pitch: Float) {
+    fun syncQueue(
+        chapterKey: String, texts: List<String>, startIndex: Int,
+        voice: String, rate: Float, pitch: Float
+    ) {
         val params = Params(voice, rateString(rate), pitchString(pitch))
+        if (chapterKey != queueChapter) suspendedChapter = null
         if (chapterKey != queueChapter || params != queueParams) {
             synchronized(trackedFiles) { pendingCleanup = true }
         }
         queueChapter = chapterKey
         queueParams = params
+        val clearedByUser = chapterKey == suspendedChapter
         queueJob?.cancel()
         queueJob = ioScope.launch {
-            val speakable = texts.filter { t -> t.any { it.isLetterOrDigit() } }
-            val files = speakable.map { cacheFile(it, params) }
+            val speakable = ArrayList<String>(texts.size)
+            val files = ArrayList<File>(texts.size)
+            var startSpeakable = 0
+            for ((i, t) in texts.withIndex()) {
+                if (t.none { it.isLetterOrDigit() }) continue
+                if (i < startIndex) startSpeakable++
+                speakable.add(t)
+                files.add(cacheFile(t, params))
+            }
             val names = HashSet<String>(files.size * 2)
             for (f in files) names.add(f.name)
             synchronized(trackedFiles) {
@@ -163,7 +215,132 @@ class EdgeSpeaker(context: Context) {
                 val grew = trackedFiles.addAll(names)
                 if (cleaned || grew) saveManifest(chapterKey, params)
             }
-            runQueue(speakable, files, params)
+
+            val waitingForWifi = wifiOnly && !isUnmetered()
+            progressFiles = files
+            progressStart = startSpeakable
+            progressStalled = false
+            progressWaitingForWifi = waitingForWifi
+
+            val end = if (waitingForWifi || clearedByUser) {
+                minOf(files.size, startSpeakable + RESTRICTED_LOOKAHEAD)
+            } else {
+                files.size
+            }
+            runQueue(speakable, files, params, startSpeakable, end)
+        }
+        startProgressLoop()
+    }
+
+    /** Stops the background chapter download (the files already downloaded are kept). */
+    fun stopQueue() {
+        queueJob?.cancel()
+        queueJob = null
+    }
+
+    private suspend fun runQueue(texts: List<String>, files: List<File>, params: Params, from: Int, to: Int) {
+        val gate = Semaphore(QUEUE_PARALLEL)
+        val failures = AtomicInteger(0)
+        coroutineScope {
+            for (i in from until to) {
+                val file = files[i]
+                if (file.exists() && file.length() > 0L) continue
+                gate.acquire()
+                if (failures.get() >= QUEUE_MAX_FAILURES) {
+                    // Probably offline. The queue is restarted at the next sentence.
+                    gate.release()
+                    progressStalled = true
+                    break
+                }
+                launch {
+                    try {
+                        startSynthesis(texts[i], params).await()
+                        failures.set(0)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        failures.incrementAndGet()
+                    } finally {
+                        gate.release()
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ progress ring
+
+    /** Publishes progress twice a second while the queue is working, then once more when it ends. */
+    private fun startProgressLoop() {
+        if (progressSink == null) return
+        progressJob?.cancel()
+        progressJob = ioScope.launch {
+            while (true) {
+                val running = queueJob?.isActive == true
+                publishProgress()
+                if (!running) break
+                delay(500)
+            }
+        }
+    }
+
+    private fun publishProgress() {
+        val sink = progressSink ?: return
+        val files = progressFiles
+        var done = 0
+        var bytes = 0L
+        val seen = HashSet<String>()
+        for (f in files) {
+            val len = f.length()
+            if (len > 0L) {
+                done++
+                if (seen.add(f.name)) bytes += len
+            }
+        }
+        sink.value = EdgeProgress(
+            total = files.size,
+            done = done,
+            bytes = bytes,
+            currentIndex = progressStart.coerceIn(0, files.size),
+            stalled = progressStalled && done < files.size,
+            waitingForWifi = progressWaitingForWifi && done < files.size
+        )
+    }
+
+    private fun isUnmetered(): Boolean {
+        return try {
+            val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val net = cm.activeNetwork ?: return true // offline: the normal failure handling deals with it
+            val caps = cm.getNetworkCapabilities(net) ?: return true
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        } catch (e: Exception) {
+            true
+        }
+    }
+
+    /** Total size of all downloaded Edge audio. Reads the disk, so call it off the main thread. */
+    fun cacheSizeBytes(): Long {
+        return try {
+            (cacheDir.listFiles() ?: emptyArray()).filter { it.name.endsWith(".mp3") }.sumOf { it.length() }
+        } catch (e: Exception) {
+            0L
+        }
+    }
+
+    /** Deletes the audio of the chapter being read. Only a few sentences ahead are fetched for it afterwards. */
+    fun clearChapter() {
+        val key = queueChapter
+        val params = queueParams
+        suspendedChapter = key
+        queueJob?.cancel()
+        queueJob = null
+        ioScope.launch {
+            synchronized(trackedFiles) {
+                for (name in trackedFiles) File(cacheDir, name).delete()
+                trackedFiles.clear()
+                if (key != null && params != null) saveManifest(key, params)
+            }
+            publishProgress()
         }
     }
 
@@ -322,6 +499,7 @@ class EdgeSpeaker(context: Context) {
         stop()
         warmJob?.cancel()
         queueJob?.cancel()
+        progressJob?.cancel()
         discardStandby()
         mainScope.cancel()
         ioScope.cancel()
@@ -407,10 +585,14 @@ class EdgeSpeaker(context: Context) {
 
     /** Deletes all downloaded sentence audio. */
     fun clearCache() {
+        suspendedChapter = queueChapter
+        queueJob?.cancel()
+        queueJob = null
         ioScope.launch {
             try {
                 synchronized(trackedFiles) { trackedFiles.clear() }
                 cacheDir.listFiles()?.forEach { it.delete() }
+                publishProgress()
             } catch (e: Exception) {
                 // ignore
             }
