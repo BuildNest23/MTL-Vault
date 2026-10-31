@@ -101,6 +101,23 @@ class SettingsViewModel(
         }
     }
 
+    /** [useEdge] true = Edge neural voices (online), false = the phone's own voice. */
+    fun updateUseEdgeVoices(useEdge: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore.updateTtsEngine(if (useEdge) "edge" else "")
+        }
+    }
+
+    fun updateEdgeVoice(voice: String) {
+        viewModelScope.launch {
+            settingsDataStore.updateEdgeVoice(voice)
+        }
+    }
+
+    fun clearEdgeCache() {
+        ttsManager?.clearEdgeCache()
+    }
+
     fun updateContinueReading(enabled: Boolean) {
         viewModelScope.launch {
             settingsDataStore.updateContinueReading(enabled)

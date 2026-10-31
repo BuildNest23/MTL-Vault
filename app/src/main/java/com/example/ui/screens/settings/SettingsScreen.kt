@@ -30,6 +30,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -56,6 +58,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.tts.edge.EdgeVoices
 import com.example.ui.components.ConfirmDialog
 import com.example.ui.components.MtlTopBar
 
@@ -271,6 +274,59 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Edge neural voices",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Natural-sounding Microsoft voices. Needs internet, no account or setup. Uses your phone's voice when offline.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = settings.ttsEngine == "edge",
+                                onCheckedChange = { viewModel.updateUseEdgeVoices(it) },
+                                modifier = Modifier.testTag("settings_edge_voices_switch")
+                            )
+                        }
+
+                        if (settings.ttsEngine == "edge") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            var voiceMenuOpen by remember { mutableStateOf(false) }
+                            Box {
+                                OutlinedButton(
+                                    onClick = { voiceMenuOpen = true },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Voice: " + EdgeVoices.labelFor(settings.edgeVoice))
+                                }
+                                DropdownMenu(
+                                    expanded = voiceMenuOpen,
+                                    onDismissRequest = { voiceMenuOpen = false }
+                                ) {
+                                    EdgeVoices.all.forEach { voice ->
+                                        DropdownMenuItem(
+                                            text = { Text(voice.label) },
+                                            onClick = {
+                                                viewModel.updateEdgeVoice(voice.shortName)
+                                                voiceMenuOpen = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(12.dp))
 
                         Row(
