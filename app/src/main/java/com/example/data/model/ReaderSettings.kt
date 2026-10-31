@@ -24,6 +24,7 @@ data class ReaderSettings(
     val ttsVoice: String = "",
     val ttsEngine: String = "", // "" = phone voice, "edge" = Edge neural voices (online)
     val edgeVoice: String = "",
+    val edgeWifiOnly: Boolean = false, // download the whole chapter ahead only on Wi-Fi / unmetered networks
     val continueReading: Boolean = true,
     val replacementsEnabled: Boolean = true,
     val detailedLogging: Boolean = false,
