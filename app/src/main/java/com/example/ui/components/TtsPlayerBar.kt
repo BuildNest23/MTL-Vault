@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tts.TtsPlaybackInfo
 import com.example.tts.TtsState
+import com.example.tts.edge.EdgeProgress
 import com.example.tts.edge.EdgeVoices
 
 @Composable
@@ -70,9 +71,16 @@ fun TtsPlayerBar(
     useEdge: Boolean = false,
     edgeVoice: String = "",
     onUseEdgeChange: (Boolean) -> Unit = {},
-    onEdgeVoiceChange: (String) -> Unit = {}
+    onEdgeVoiceChange: (String) -> Unit = {},
+    edgeProgress: EdgeProgress = EdgeProgress(),
+    edgeWifiOnly: Boolean = false,
+    onEdgeWifiOnlyChange: (Boolean) -> Unit = {},
+    onClearEdgeChapter: () -> Unit = {},
+    onClearEdgeCache: () -> Unit = {},
+    loadEdgeCacheSize: suspend () -> Long = { 0L }
 ) {
     var expandedSettings by remember { mutableStateOf(false) }
+    var showEdgeSheet by remember { mutableStateOf(false) }
 
     Card(
         modifier = modifier
@@ -162,31 +170,42 @@ fun TtsPlayerBar(
                 }
             }
 
-            // Status chip (e.g. "Paragraph 4 / 22" or status)
-            if (playbackInfo.state == TtsState.PLAYING || playbackInfo.state == TtsState.PAUSED) {
+            // Status chip (e.g. "Paragraph 4 / 22" or status) and the Edge download ring
+            val showStatus = playbackInfo.state == TtsState.PLAYING || playbackInfo.state == TtsState.PAUSED
+            val showRing = useEdge && edgeProgress.total > 0
+            if (showStatus || showRing) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.GraphicEq,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (playbackInfo.totalChunks > 0) {
-                            "Reading part ${playbackInfo.currentChunkIndex + 1} of ${playbackInfo.totalChunks}"
-                        } else {
-                            "Speaking..."
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
+                    if (showStatus) {
+                        Icon(
+                            imageVector = Icons.Default.GraphicEq,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (playbackInfo.totalChunks > 0) {
+                                "Reading part ${playbackInfo.currentChunkIndex + 1} of ${playbackInfo.totalChunks}"
+                            } else {
+                                "Speaking..."
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    if (showRing) {
+                        if (showStatus) Spacer(modifier = Modifier.width(10.dp))
+                        EdgeDownloadRing(
+                            progress = edgeProgress,
+                            onClick = { showEdgeSheet = true }
+                        )
+                    }
                 }
             }
 
@@ -294,5 +313,16 @@ fun TtsPlayerBar(
                 }
             }
         }
+    }
+    if (showEdgeSheet) {
+        EdgeDownloadSheet(
+            progress = edgeProgress,
+            wifiOnly = edgeWifiOnly,
+            onWifiOnlyChange = onEdgeWifiOnlyChange,
+            onClearChapter = onClearEdgeChapter,
+            onClearCache = onClearEdgeCache,
+            loadCacheSize = loadEdgeCacheSize,
+            onDismiss = { showEdgeSheet = false }
+        )
     }
 }
