@@ -8,6 +8,8 @@ import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import com.example.tts.edge.EdgeSpeaker
+import com.example.tts.edge.EdgeVoices
 import android.speech.tts.Voice
 import android.util.Log
 import com.example.MtlVaultApplication
@@ -161,6 +163,15 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     private var speechRate = 1.0f
     private var speechPitch = 1.0f
     private var selectedVoiceName: String? = null
+
+    // Edge neural voices (online). When switched off, the phone's own TextToSpeech engine is used.
+    @Volatile
+    private var useEdge = false
+    private var edgeVoice: String = EdgeVoices.DEFAULT
+    private var edge: EdgeSpeaker? = null
+    // After an Edge failure (e.g. no internet) the phone's voice is used until this time.
+    @Volatile
+    private var edgeRetryAfterMs = 0L
 
     var onChapterCompleteCallback: (() -> Unit)? = null
     var onNextChapterRequested: (() -> Unit)? = null
@@ -332,42 +343,104 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
+    private fun handleUtteranceStart(utteranceId: String?) {
+        AppLogger.d("TtsManager", "onStart: utteranceId=$utteranceId")
+        if (utteranceId != null && utteranceId.startsWith("ch_")) {
+            val parsed = parseUtteranceId(utteranceId)
+            val index = parsed?.chunkIndex ?: (extractChunkIndex(utteranceId) ?: currentChunkIndex)
+            currentChunkIndex = index
+            mainScope.launch {
+                _playbackInfo.value = _playbackInfo.value.copy(
+                    state = TtsState.PLAYING,
+                    currentChunkIndex = index,
+                    errorMessage = null
+                )
+                AppLogger.d("TtsManager", "Playback state: PLAYING, chunk=$index")
+            }
+
+            // Highlight the sentence (sub-utterance) that just started speaking.
+            // This does not depend on onRangeStart, which many engines never send.
+            if (parsed != null && isSpeakingActive) {
+                val sub = currentSubUtterances.getOrNull(parsed.subIndex)
+                if (sub != null && sub.baseCharOffset == parsed.baseOffset) {
+                    resumeChunkIndex = index
+                    resumeCharOffset = sub.baseCharOffset
+                    _highlightState.value = TtsHighlightState(
+                        paragraphIndex = index,
+                        sentenceStart = sub.baseCharOffset,
+                        sentenceEnd = sub.endCharOffset,
+                        isSentenceLevel = true
+                    )
+                    if (AppLogger.isDetailedLogging) {
+                        AppLogger.d("TtsManager", "Highlight sentence: chunk=$index span=${sub.baseCharOffset}-${sub.endCharOffset}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun handleUtteranceDone(utteranceId: String?, engine: TextToSpeech?) {
+        AppLogger.d("TtsManager", "onDone: utteranceId=$utteranceId")
+        if (!isSpeakingActive) return
+
+        val parsed = parseUtteranceId(utteranceId)
+        // A flushed (superseded) utterance also reports onDone. Without this check the stale
+        // callback advanced the NEW sentence list, so double-tapping an earlier sentence
+        // jumped to the next one.
+        if (parsed != null && utteranceId != activeUtteranceId) {
+            AppLogger.d("TtsManager", "onDone ignored (stale): $utteranceId, active=$activeUtteranceId")
+            return
+        }
+        if (utteranceId != null && utteranceId.startsWith("silence_") &&
+            extractChunkIndex(utteranceId) != currentChunkIndex) {
+            return
+        }
+        if (parsed != null) {
+            val finishedChunk = parsed.chunkIndex
+            val finishedSub = parsed.subIndex
+
+            if (finishedSub + 1 < currentSubUtterances.size) {
+                currentSubUtteranceIndex = finishedSub + 1
+                mainScope.launch {
+                    speakCurrentSubUtterance(finishedChunk)
+                }
+                return
+            }
+
+            val silenceId = "silence_${currentChapterId}_$finishedChunk"
+            var silenceQueued = false
+            try {
+                val res = engine?.playSilentUtterance(500L, TextToSpeech.QUEUE_ADD, silenceId) ?: TextToSpeech.ERROR
+                silenceQueued = (res == TextToSpeech.SUCCESS)
+            } catch (e: Exception) {
+                Log.w(tag, "playSilentUtterance failed: ${e.localizedMessage}")
+            }
+
+            if (!silenceQueued) {
+                mainScope.launch {
+                    delay(800)
+                    if (isSpeakingActive && currentChunkIndex == finishedChunk) {
+                        advanceToNextChunk(finishedChunk)
+                    }
+                }
+            } else {
+                mainScope.launch {
+                    delay(2500)
+                    if (isSpeakingActive && currentChunkIndex == finishedChunk && lastAdvancedChunk < finishedChunk) {
+                        advanceToNextChunk(finishedChunk)
+                    }
+                }
+            }
+        } else if (utteranceId != null && utteranceId.startsWith("silence_")) {
+            val finishedIndex = extractChunkIndex(utteranceId) ?: currentChunkIndex
+            advanceToNextChunk(finishedIndex)
+        }
+    }
+
     private fun setupProgressListener(engine: TextToSpeech) {
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
-                AppLogger.d("TtsManager", "onStart: utteranceId=$utteranceId")
-                if (utteranceId != null && utteranceId.startsWith("ch_")) {
-                    val parsed = parseUtteranceId(utteranceId)
-                    val index = parsed?.chunkIndex ?: (extractChunkIndex(utteranceId) ?: currentChunkIndex)
-                    currentChunkIndex = index
-                    mainScope.launch {
-                        _playbackInfo.value = _playbackInfo.value.copy(
-                            state = TtsState.PLAYING,
-                            currentChunkIndex = index,
-                            errorMessage = null
-                        )
-                        AppLogger.d("TtsManager", "Playback state: PLAYING, chunk=$index")
-                    }
-
-                    // Highlight the sentence (sub-utterance) that just started speaking.
-                    // This does not depend on onRangeStart, which many engines never send.
-                    if (parsed != null && isSpeakingActive) {
-                        val sub = currentSubUtterances.getOrNull(parsed.subIndex)
-                        if (sub != null && sub.baseCharOffset == parsed.baseOffset) {
-                            resumeChunkIndex = index
-                            resumeCharOffset = sub.baseCharOffset
-                            _highlightState.value = TtsHighlightState(
-                                paragraphIndex = index,
-                                sentenceStart = sub.baseCharOffset,
-                                sentenceEnd = sub.endCharOffset,
-                                isSentenceLevel = true
-                            )
-                            if (AppLogger.isDetailedLogging) {
-                                AppLogger.d("TtsManager", "Highlight sentence: chunk=$index span=${sub.baseCharOffset}-${sub.endCharOffset}")
-                            }
-                        }
-                    }
-                }
+                handleUtteranceStart(utteranceId)
             }
 
             override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
@@ -378,61 +451,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             }
 
             override fun onDone(utteranceId: String?) {
-                AppLogger.d("TtsManager", "onDone: utteranceId=$utteranceId")
-                if (!isSpeakingActive) return
-
-                val parsed = parseUtteranceId(utteranceId)
-                // A flushed (superseded) utterance also reports onDone. Without this check the stale
-                // callback advanced the NEW sentence list, so double-tapping an earlier sentence
-                // jumped to the next one.
-                if (parsed != null && utteranceId != activeUtteranceId) {
-                    AppLogger.d("TtsManager", "onDone ignored (stale): $utteranceId, active=$activeUtteranceId")
-                    return
-                }
-                if (utteranceId != null && utteranceId.startsWith("silence_") &&
-                    extractChunkIndex(utteranceId) != currentChunkIndex) {
-                    return
-                }
-                if (parsed != null) {
-                    val finishedChunk = parsed.chunkIndex
-                    val finishedSub = parsed.subIndex
-
-                    if (finishedSub + 1 < currentSubUtterances.size) {
-                        currentSubUtteranceIndex = finishedSub + 1
-                        mainScope.launch {
-                            speakCurrentSubUtterance(finishedChunk)
-                        }
-                        return
-                    }
-
-                    val silenceId = "silence_${currentChapterId}_$finishedChunk"
-                    var silenceQueued = false
-                    try {
-                        val res = engine.playSilentUtterance(500L, TextToSpeech.QUEUE_ADD, silenceId)
-                        silenceQueued = (res == TextToSpeech.SUCCESS)
-                    } catch (e: Exception) {
-                        Log.w(tag, "playSilentUtterance failed: ${e.localizedMessage}")
-                    }
-
-                    if (!silenceQueued) {
-                        mainScope.launch {
-                            delay(800)
-                            if (isSpeakingActive && currentChunkIndex == finishedChunk) {
-                                advanceToNextChunk(finishedChunk)
-                            }
-                        }
-                    } else {
-                        mainScope.launch {
-                            delay(2500)
-                            if (isSpeakingActive && currentChunkIndex == finishedChunk && lastAdvancedChunk < finishedChunk) {
-                                advanceToNextChunk(finishedChunk)
-                            }
-                        }
-                    }
-                } else if (utteranceId != null && utteranceId.startsWith("silence_")) {
-                    val finishedIndex = extractChunkIndex(utteranceId) ?: currentChunkIndex
-                    advanceToNextChunk(finishedIndex)
-                }
+                handleUtteranceDone(utteranceId, engine)
             }
 
             @Deprecated("Deprecated in Java")
@@ -666,7 +685,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     }
 
     private fun ensureReady(onReady: () -> Unit) {
-        if (isInitialized && tts != null) {
+        if (useEdge || (isInitialized && tts != null)) {
             onReady()
         } else {
             initEngine(onReady)
@@ -720,6 +739,11 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         if (!isSpeakingActive || currentSubUtterances.isEmpty()) return
         val sub = currentSubUtterances.getOrNull(currentSubUtteranceIndex) ?: return
 
+        if (useEdge && System.currentTimeMillis() >= edgeRetryAfterMs) {
+            speakWithEdge(chunkIndex, sub)
+            return
+        }
+
         val engine = tts
         if (engine == null || !isInitialized) {
             AppLogger.w("TtsManager", "speakCurrentSubUtterance: engine not ready, calling initEngine")
@@ -750,6 +774,110 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 }
             }
         }
+    }
+
+    private fun edgeSpeaker(): EdgeSpeaker {
+        return edge ?: EdgeSpeaker(context.applicationContext).also { edge = it }
+    }
+
+    /** Speaks one sentence with the Edge neural voice. Falls back to the phone's voice if Edge fails. */
+    private fun speakWithEdge(chunkIndex: Int, sub: SubUtterance) {
+        val utteranceId = "ch_${currentChapterId}_${chunkIndex}_sub_${currentSubUtteranceIndex}_base_${sub.baseCharOffset}"
+        activeUtteranceId = utteranceId
+        AppLogger.d("TtsManager", "speakEdge: utteranceId=$utteranceId, voice=$edgeVoice, len=${sub.text.length}")
+
+        edgeSpeaker().speak(
+            utteranceId, sub.text, edgeVoice, speechRate, speechPitch,
+            object : EdgeSpeaker.Callback {
+                override fun onStart(id: String) {
+                    if (id == activeUtteranceId) handleUtteranceStart(id)
+                }
+
+                override fun onDone(id: String) {
+                    handleUtteranceDone(id, null)
+                }
+
+                override fun onError(id: String, message: String) {
+                    if (id != activeUtteranceId || !isSpeakingActive) return
+                    AppLogger.w("TtsManager", "Edge TTS failed ($message). Using the phone voice for a while.")
+                    edgeRetryAfterMs = System.currentTimeMillis() + 45_000L
+                    speakWithSystemEngine(id, sub, message)
+                }
+            }
+        )
+        prefetchUpcoming(chunkIndex)
+    }
+
+    private fun speakWithSystemEngine(utteranceId: String, sub: SubUtterance, reason: String) {
+        val engine = tts
+        if (engine == null || !isInitialized) {
+            handleUtteranceError("Edge voice unavailable: $reason", TextToSpeech.ERROR_NETWORK)
+            return
+        }
+        val params = Bundle().apply {
+            putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
+        }
+        val text = if (sub.text.any { it.isLetterOrDigit() }) sub.text else "."
+        val result = engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+        if (result != TextToSpeech.SUCCESS) {
+            handleUtteranceError("Edge voice unavailable: $reason", TextToSpeech.ERROR_NETWORK)
+        }
+    }
+
+    /** Downloads the next couple of sentences while the current one is playing. */
+    private fun prefetchUpcoming(chunkIndex: Int) {
+        val upcoming = ArrayList<String>(2)
+        var i = currentSubUtteranceIndex + 1
+        while (i < currentSubUtterances.size && upcoming.size < 2) {
+            upcoming.add(currentSubUtterances[i].text)
+            i++
+        }
+        var next = chunkIndex + 1
+        while (upcoming.size < 2 && next < chunks.size) {
+            val paragraph = chunks[next]
+            val sentences = chapterSentences.getOrNull(next) ?: SentenceSplitter.splitIntoSentences(paragraph)
+            for (candidate in buildSubUtterances(paragraph, sentences, 0)) {
+                if (upcoming.size < 2) upcoming.add(candidate.text)
+            }
+            next++
+        }
+        if (upcoming.isNotEmpty()) {
+            edge?.prefetch(upcoming, edgeVoice, speechRate, speechPitch)
+        }
+    }
+
+    /**
+     * Switches between the phone's own voice and Edge neural voices. If something is being read
+     * right now, the current sentence restarts with the new voice.
+     */
+    fun setEdgeMode(enabled: Boolean, voice: String) {
+        val newVoice = voice.ifBlank { EdgeVoices.DEFAULT }
+        val changed = enabled != useEdge || (enabled && newVoice != edgeVoice)
+        useEdge = enabled
+        edgeVoice = newVoice
+        if (!changed) return
+        edgeRetryAfterMs = 0L
+        if (isSpeakingActive) {
+            mainScope.launch {
+                try {
+                    tts?.stop()
+                } catch (e: Exception) {
+                    AppLogger.w("TtsManager", "Error stopping system TTS while switching voice: ${e.localizedMessage}")
+                }
+                edge?.stop()
+                if (isSpeakingActive) {
+                    val resumeOffset = if (resumeChunkIndex == currentChunkIndex) resumeCharOffset else 0
+                    prepareAndSpeakChunk(currentChunkIndex, resumeOffset)
+                }
+            }
+        } else {
+            edge?.stop()
+        }
+    }
+
+    /** Removes downloaded Edge audio from the cache. */
+    fun clearEdgeCache() {
+        edgeSpeaker().clearCache()
     }
 
     private fun speakCurrentChunk() {
@@ -802,6 +930,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         } catch (e: Exception) {
             AppLogger.w("TtsManager", "Error during tts.stop on pause: ${e.localizedMessage}")
         }
+        edge?.stop()
         abandonAudioFocus()
         _playbackInfo.value = _playbackInfo.value.copy(state = TtsState.PAUSED)
         AppLogger.i("TtsManager", "Playback state: PAUSED")
@@ -837,6 +966,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         } catch (e: Exception) {
             AppLogger.w("TtsManager", "Error during tts.stop: ${e.localizedMessage}")
         }
+        edge?.stop()
         abandonAudioFocus()
         _playbackInfo.value = _playbackInfo.value.copy(
             state = TtsState.IDLE,
@@ -1139,6 +1269,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     fun shutdown() {
         AppLogger.i("TtsManager", "shutdown called")
         stop(triggerServiceStop = true)
+        edge?.release()
+        edge = null
         try {
             tts?.shutdown()
         } catch (e: Exception) {
