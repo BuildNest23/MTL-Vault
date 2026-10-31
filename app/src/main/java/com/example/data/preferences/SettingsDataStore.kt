@@ -30,6 +30,7 @@ class SettingsDataStore(private val context: Context) {
         val TTS_PITCH = floatPreferencesKey("tts_pitch")
         val TTS_VOICE = stringPreferencesKey("tts_voice")
         val TTS_ENGINE = stringPreferencesKey("tts_engine")
+        val EDGE_VOICE = stringPreferencesKey("edge_voice")
         val CONTINUE_READING = booleanPreferencesKey("continue_reading")
         val REPLACEMENTS_ENABLED = booleanPreferencesKey("replacements_enabled")
         val DETAILED_LOGGING = booleanPreferencesKey("detailed_logging")
@@ -57,6 +58,7 @@ class SettingsDataStore(private val context: Context) {
                 ttsPitch = preferences[PreferencesKeys.TTS_PITCH] ?: 1.0f,
                 ttsVoice = preferences[PreferencesKeys.TTS_VOICE] ?: "",
                 ttsEngine = preferences[PreferencesKeys.TTS_ENGINE] ?: "",
+                edgeVoice = preferences[PreferencesKeys.EDGE_VOICE] ?: "",
                 continueReading = preferences[PreferencesKeys.CONTINUE_READING] ?: true,
                 replacementsEnabled = preferences[PreferencesKeys.REPLACEMENTS_ENABLED] ?: true,
                 detailedLogging = preferences[PreferencesKeys.DETAILED_LOGGING] ?: false,
@@ -128,6 +130,10 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[PreferencesKeys.TTS_ENGINE] = engine }
     }
 
+    suspend fun updateEdgeVoice(voice: String) {
+        context.dataStore.edit { it[PreferencesKeys.EDGE_VOICE] = voice }
+    }
+
     suspend fun updateContinueReading(enabled: Boolean) {
         context.dataStore.edit { it[PreferencesKeys.CONTINUE_READING] = enabled }
     }
@@ -160,6 +166,7 @@ class SettingsDataStore(private val context: Context) {
             prefs[PreferencesKeys.TTS_PITCH] = settings.ttsPitch
             prefs[PreferencesKeys.TTS_VOICE] = settings.ttsVoice
             prefs[PreferencesKeys.TTS_ENGINE] = settings.ttsEngine
+            prefs[PreferencesKeys.EDGE_VOICE] = settings.edgeVoice
             prefs[PreferencesKeys.CONTINUE_READING] = settings.continueReading
             prefs[PreferencesKeys.REPLACEMENTS_ENABLED] = settings.replacementsEnabled
             prefs[PreferencesKeys.DETAILED_LOGGING] = settings.detailedLogging
