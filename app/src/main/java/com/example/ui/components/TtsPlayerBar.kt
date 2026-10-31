@@ -5,6 +5,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,13 +26,17 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tts.TtsPlaybackInfo
 import com.example.tts.TtsState
+import com.example.tts.edge.EdgeVoices
 
 @Composable
 fun TtsPlayerBar(
@@ -60,7 +66,11 @@ fun TtsPlayerBar(
     onNextChapter: () -> Unit,
     onRateChange: (Float) -> Unit,
     onPitchChange: (Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    useEdge: Boolean = false,
+    edgeVoice: String = "",
+    onUseEdgeChange: (Boolean) -> Unit = {},
+    onEdgeVoiceChange: (String) -> Unit = {}
 ) {
     var expandedSettings by remember { mutableStateOf(false) }
 
@@ -202,6 +212,48 @@ fun TtsPlayerBar(
                         .fillMaxWidth()
                         .padding(top = 10.dp, start = 8.dp, end = 8.dp)
                 ) {
+                    // Voice engine: phone voice or Edge neural voices
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Edge neural voice",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Switch(
+                            checked = useEdge,
+                            onCheckedChange = onUseEdgeChange,
+                            modifier = Modifier.testTag("tts_edge_switch")
+                        )
+                    }
+                    if (useEdge) {
+                        var voiceMenuOpen by remember { mutableStateOf(false) }
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(
+                                onClick = { voiceMenuOpen = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Voice: " + EdgeVoices.labelFor(edgeVoice))
+                            }
+                            DropdownMenu(
+                                expanded = voiceMenuOpen,
+                                onDismissRequest = { voiceMenuOpen = false }
+                            ) {
+                                EdgeVoices.all.forEach { voice ->
+                                    DropdownMenuItem(
+                                        text = { Text(voice.label) },
+                                        onClick = {
+                                            onEdgeVoiceChange(voice.shortName)
+                                            voiceMenuOpen = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     // Speed
                     Row(
                         modifier = Modifier.fillMaxWidth(),
