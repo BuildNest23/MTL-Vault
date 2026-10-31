@@ -76,6 +76,7 @@ class MtlVaultApplication : Application() {
                 AppLogger.isDetailedLogging = settings.detailedLogging
                 ttsManager.setSpeechRate(settings.ttsRate)
                 ttsManager.setSpeechPitch(settings.ttsPitch)
+                ttsManager.setEdgeMode(settings.ttsEngine == "edge", settings.edgeVoice)
                 if (settings.ttsVoice.isNotBlank()) {
                     ttsManager.setVoice(settings.ttsVoice)
                 }
