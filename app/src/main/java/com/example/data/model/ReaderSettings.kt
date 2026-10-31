@@ -22,7 +22,8 @@ data class ReaderSettings(
     val ttsRate: Float = 1.0f,
     val ttsPitch: Float = 1.0f,
     val ttsVoice: String = "",
-    val ttsEngine: String = "",
+    val ttsEngine: String = "", // "" = phone voice, "edge" = Edge neural voices (online)
+    val edgeVoice: String = "",
     val continueReading: Boolean = true,
     val replacementsEnabled: Boolean = true,
     val detailedLogging: Boolean = false,
