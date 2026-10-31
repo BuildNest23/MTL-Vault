@@ -382,41 +382,6 @@ class EdgeSpeaker(
         }
     }
 
-    /** Stops the background chapter download (the files already downloaded are kept). */
-    fun stopQueue() {
-        queueJob?.cancel()
-        queueJob = null
-    }
-
-    private suspend fun runQueue(texts: List<String>, files: List<File>, params: Params) {
-        val gate = Semaphore(QUEUE_PARALLEL)
-        val failures = AtomicInteger(0)
-        coroutineScope {
-            for (i in texts.indices) {
-                val file = files[i]
-                if (file.exists() && file.length() > 0L) continue
-                gate.acquire()
-                if (failures.get() >= QUEUE_MAX_FAILURES) {
-                    // Probably offline. The queue is restarted at the next sentence.
-                    gate.release()
-                    break
-                }
-                launch {
-                    try {
-                        startSynthesis(texts[i], params).await()
-                        failures.set(0)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        failures.incrementAndGet()
-                    } finally {
-                        gate.release()
-                    }
-                }
-            }
-        }
-    }
-
     /** Prepares a player for the very next sentence so it can start with no delay. */
     fun warmNext(text: String, voice: String, rate: Float, pitch: Float) {
         if (text.none { it.isLetterOrDigit() }) return
