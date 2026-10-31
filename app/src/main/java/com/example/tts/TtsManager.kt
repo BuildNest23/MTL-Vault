@@ -49,6 +49,9 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         const val MIN_SENTENCE_CHARS = 25
         const val MAX_UTTERANCE_CHARS = 3500
 
+        /** Pause between paragraphs when using Edge voices (the phone engine uses a 500 ms silent utterance). */
+        const val EDGE_PARAGRAPH_PAUSE_MS = 300L
+
         /**
          * Builds one utterance per sentence so the reader can highlight the spoken sentence from
          * onStart, without relying on onRangeStart (which many TTS engines never send).
@@ -417,8 +420,10 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             }
 
             if (!silenceQueued) {
+                // Edge voices have no engine to queue silence on, so this delay IS the paragraph pause.
+                val pauseMs = if (engine == null) EDGE_PARAGRAPH_PAUSE_MS else 800L
                 mainScope.launch {
-                    delay(800)
+                    delay(pauseMs)
                     if (isSpeakingActive && currentChunkIndex == finishedChunk) {
                         advanceToNextChunk(finishedChunk)
                     }
@@ -805,7 +810,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 }
             }
         )
-        prefetchUpcoming(chunkIndex)
+        queueUpcoming(chunkIndex)
     }
 
     private fun speakWithSystemEngine(utteranceId: String, sub: SubUtterance, reason: String) {
@@ -824,25 +829,44 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
-    /** Downloads the next couple of sentences while the current one is playing. */
-    private fun prefetchUpcoming(chunkIndex: Int) {
-        val upcoming = ArrayList<String>(2)
-        var i = currentSubUtteranceIndex + 1
-        while (i < currentSubUtterances.size && upcoming.size < 2) {
-            upcoming.add(currentSubUtterances[i].text)
+    // Sentence texts per paragraph of the current chapter, so the chapter download queue does not
+    // have to split every paragraph again for each sentence. Reset whenever `chunks` changes.
+    private val edgeChunkTexts = HashMap<Int, List<String>>()
+    private var edgeChunkTextsSource: List<String>? = null
+
+    private fun edgeTextsForChunk(index: Int): List<String> {
+        if (edgeChunkTextsSource !== chunks) {
+            edgeChunkTexts.clear()
+            edgeChunkTextsSource = chunks
+        }
+        return edgeChunkTexts.getOrPut(index) {
+            val paragraph = chunks[index]
+            val sentences = chapterSentences.getOrNull(index) ?: SentenceSplitter.splitIntoSentences(paragraph)
+            buildSubUtterances(paragraph, sentences, 0).map { it.text }
+        }
+    }
+
+    /**
+     * Tells the Edge speaker to download everything from the current sentence to the end of the
+     * chapter (in order), and to have the very next sentence ready on a standby player.
+     */
+    private fun queueUpcoming(chunkIndex: Int) {
+        val all = ArrayList<String>()
+        var i = currentSubUtteranceIndex
+        while (i < currentSubUtterances.size) {
+            all.add(currentSubUtterances[i].text)
             i++
         }
         var next = chunkIndex + 1
-        while (upcoming.size < 2 && next < chunks.size) {
-            val paragraph = chunks[next]
-            val sentences = chapterSentences.getOrNull(next) ?: SentenceSplitter.splitIntoSentences(paragraph)
-            for (candidate in buildSubUtterances(paragraph, sentences, 0)) {
-                if (upcoming.size < 2) upcoming.add(candidate.text)
-            }
+        while (next < chunks.size) {
+            all.addAll(edgeTextsForChunk(next))
             next++
         }
-        if (upcoming.isNotEmpty()) {
-            edge?.prefetch(upcoming, edgeVoice, speechRate, speechPitch)
+        val speaker = edge ?: return
+        speaker.syncQueue("${currentNovelId}:${currentChapterId}", all, edgeVoice, speechRate, speechPitch)
+        val following = all.drop(1).firstOrNull { t -> t.any { it.isLetterOrDigit() } }
+        if (following != null) {
+            speaker.warmNext(following, edgeVoice, speechRate, speechPitch)
         }
     }
 
@@ -967,6 +991,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             AppLogger.w("TtsManager", "Error during tts.stop: ${e.localizedMessage}")
         }
         edge?.stop()
+        edge?.stopQueue()
         abandonAudioFocus()
         _playbackInfo.value = _playbackInfo.value.copy(
             state = TtsState.IDLE,
