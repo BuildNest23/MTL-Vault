@@ -31,6 +31,7 @@ class SettingsDataStore(private val context: Context) {
         val TTS_VOICE = stringPreferencesKey("tts_voice")
         val TTS_ENGINE = stringPreferencesKey("tts_engine")
         val EDGE_VOICE = stringPreferencesKey("edge_voice")
+        val EDGE_WIFI_ONLY = booleanPreferencesKey("edge_wifi_only")
         val CONTINUE_READING = booleanPreferencesKey("continue_reading")
         val REPLACEMENTS_ENABLED = booleanPreferencesKey("replacements_enabled")
         val DETAILED_LOGGING = booleanPreferencesKey("detailed_logging")
@@ -59,6 +60,7 @@ class SettingsDataStore(private val context: Context) {
                 ttsVoice = preferences[PreferencesKeys.TTS_VOICE] ?: "",
                 ttsEngine = preferences[PreferencesKeys.TTS_ENGINE] ?: "",
                 edgeVoice = preferences[PreferencesKeys.EDGE_VOICE] ?: "",
+                edgeWifiOnly = preferences[PreferencesKeys.EDGE_WIFI_ONLY] ?: false,
                 continueReading = preferences[PreferencesKeys.CONTINUE_READING] ?: true,
                 replacementsEnabled = preferences[PreferencesKeys.REPLACEMENTS_ENABLED] ?: true,
                 detailedLogging = preferences[PreferencesKeys.DETAILED_LOGGING] ?: false,
@@ -134,6 +136,10 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[PreferencesKeys.EDGE_VOICE] = voice }
     }
 
+    suspend fun updateEdgeWifiOnly(enabled: Boolean) {
+        context.dataStore.edit { it[PreferencesKeys.EDGE_WIFI_ONLY] = enabled }
+    }
+
     suspend fun updateContinueReading(enabled: Boolean) {
         context.dataStore.edit { it[PreferencesKeys.CONTINUE_READING] = enabled }
     }
@@ -167,6 +173,7 @@ class SettingsDataStore(private val context: Context) {
             prefs[PreferencesKeys.TTS_VOICE] = settings.ttsVoice
             prefs[PreferencesKeys.TTS_ENGINE] = settings.ttsEngine
             prefs[PreferencesKeys.EDGE_VOICE] = settings.edgeVoice
+            prefs[PreferencesKeys.EDGE_WIFI_ONLY] = settings.edgeWifiOnly
             prefs[PreferencesKeys.CONTINUE_READING] = settings.continueReading
             prefs[PreferencesKeys.REPLACEMENTS_ENABLED] = settings.replacementsEnabled
             prefs[PreferencesKeys.DETAILED_LOGGING] = settings.detailedLogging
