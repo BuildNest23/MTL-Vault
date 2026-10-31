@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import com.example.tts.edge.EdgeProgress
 import com.example.tts.edge.EdgeSpeaker
 import com.example.tts.edge.EdgeVoices
 import android.speech.tts.Voice
@@ -175,6 +176,11 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     // After an Edge failure (e.g. no internet) the phone's voice is used until this time.
     @Volatile
     private var edgeRetryAfterMs = 0L
+
+    // Download progress of the chapter being read with an Edge voice (drives the ring in the player bar).
+    private val _edgeProgress = MutableStateFlow(EdgeProgress())
+    val edgeProgress: StateFlow<EdgeProgress> = _edgeProgress.asStateFlow()
+    private var edgeWifiOnly = false
 
     var onChapterCompleteCallback: (() -> Unit)? = null
     var onNextChapterRequested: (() -> Unit)? = null
@@ -782,7 +788,10 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     }
 
     private fun edgeSpeaker(): EdgeSpeaker {
-        return edge ?: EdgeSpeaker(context.applicationContext).also { edge = it }
+        return edge ?: EdgeSpeaker(context.applicationContext, _edgeProgress).also {
+            it.wifiOnly = edgeWifiOnly
+            edge = it
+        }
     }
 
     /** Speaks one sentence with the Edge neural voice. Falls back to the phone's voice if Edge fails. */
@@ -847,28 +856,54 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     }
 
     /**
-     * Tells the Edge speaker to download everything from the current sentence to the end of the
-     * chapter (in order), and to have the very next sentence ready on a standby player.
+     * Tells the Edge speaker about the whole chapter (in reading order) and which sentence is
+     * speaking now: it downloads from there to the end, and has the very next sentence ready on
+     * a standby player.
      */
     private fun queueUpcoming(chunkIndex: Int) {
         val all = ArrayList<String>()
-        var i = currentSubUtteranceIndex
-        while (i < currentSubUtterances.size) {
-            all.add(currentSubUtterances[i].text)
-            i++
+        for (c in 0 until chunkIndex.coerceAtMost(chunks.size)) {
+            all.addAll(edgeTextsForChunk(c))
         }
+        val startIndex = all.size + currentSubUtteranceIndex
+        for (sub in currentSubUtterances) all.add(sub.text)
         var next = chunkIndex + 1
         while (next < chunks.size) {
             all.addAll(edgeTextsForChunk(next))
             next++
         }
         val speaker = edge ?: return
-        speaker.syncQueue("${currentNovelId}:${currentChapterId}", all, edgeVoice, speechRate, speechPitch)
-        val following = all.drop(1).firstOrNull { t -> t.any { it.isLetterOrDigit() } }
+        speaker.syncQueue(
+            "${currentNovelId}:${currentChapterId}", all, startIndex,
+            edgeVoice, speechRate, speechPitch
+        )
+        var following: String? = null
+        var k = startIndex + 1
+        while (k < all.size) {
+            if (all[k].any { it.isLetterOrDigit() }) {
+                following = all[k]
+                break
+            }
+            k++
+        }
         if (following != null) {
             speaker.warmNext(following, edgeVoice, speechRate, speechPitch)
         }
     }
+
+    /** Turns "download the whole chapter on any network" into "only on Wi-Fi / unmetered networks". */
+    fun setEdgeWifiOnly(enabled: Boolean) {
+        edgeWifiOnly = enabled
+        edge?.wifiOnly = enabled
+    }
+
+    /** Deletes the downloaded audio of the chapter being read. */
+    fun clearEdgeChapter() {
+        edge?.clearChapter()
+    }
+
+    /** Size of all downloaded Edge audio in bytes. Reads the disk: call it off the main thread. */
+    fun edgeCacheSize(): Long = edgeSpeaker().cacheSizeBytes()
 
     /**
      * Switches between the phone's own voice and Edge neural voices. If something is being read
@@ -881,6 +916,10 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         edgeVoice = newVoice
         if (!changed) return
         edgeRetryAfterMs = 0L
+        if (!enabled) {
+            edge?.stopQueue()
+            _edgeProgress.value = EdgeProgress()
+        }
         if (isSpeakingActive) {
             mainScope.launch {
                 try {
