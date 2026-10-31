@@ -430,6 +430,7 @@ class NovelRepository(
             settingsDataStore.saveAllSettings(
                 restored.copy(
                     ttsEngine = if (restored.ttsEngine.isBlank()) current.ttsEngine else restored.ttsEngine,
+                    edgeVoice = if (restored.edgeVoice.isBlank()) current.edgeVoice else restored.edgeVoice,
                     detailedLogging = current.detailedLogging
                 )
             )
