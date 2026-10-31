@@ -149,6 +149,7 @@ fun ReaderScreen(
     val renderedContent by viewModel.renderedContent.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val ttsInfo by viewModel.ttsPlaybackInfo.collectAsStateWithLifecycle()
+    val edgeProgress by viewModel.edgeProgress.collectAsStateWithLifecycle()
     val chaptersList by viewModel.chaptersList.collectAsStateWithLifecycle()
     val initialParagraphIndex by viewModel.initialParagraphIndex.collectAsStateWithLifecycle()
 
@@ -741,7 +742,13 @@ fun ReaderScreen(
                 useEdge = settings.ttsEngine == "edge",
                 edgeVoice = settings.edgeVoice,
                 onUseEdgeChange = { viewModel.setUseEdgeVoices(it) },
-                onEdgeVoiceChange = { viewModel.setEdgeVoice(it) }
+                onEdgeVoiceChange = { viewModel.setEdgeVoice(it) },
+                edgeProgress = edgeProgress,
+                edgeWifiOnly = settings.edgeWifiOnly,
+                onEdgeWifiOnlyChange = { viewModel.setEdgeWifiOnly(it) },
+                onClearEdgeChapter = { viewModel.clearEdgeChapter() },
+                onClearEdgeCache = { viewModel.clearEdgeCache() },
+                loadEdgeCacheSize = { viewModel.edgeCacheSize() }
             )
         }
     }

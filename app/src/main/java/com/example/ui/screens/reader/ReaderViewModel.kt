@@ -11,6 +11,7 @@ import com.example.data.model.ReaderSettings
 import com.example.data.preferences.SettingsDataStore
 import com.example.data.repository.NovelRepository
 import com.example.tts.TtsManager
+import com.example.tts.edge.EdgeProgress
 import com.example.tts.TtsPlaybackInfo
 import com.example.tts.TtsHighlightState
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -27,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed class ReaderEvent {
     data class ShowToast(val message: String) : ReaderEvent()
@@ -64,6 +66,7 @@ class ReaderViewModel(
 
     val ttsPlaybackInfo: StateFlow<TtsPlaybackInfo> = ttsManager.playbackInfo
     val ttsHighlightState: StateFlow<TtsHighlightState> = ttsManager.highlightState
+    val edgeProgress: StateFlow<EdgeProgress> = ttsManager.edgeProgress
 
     private val _events = MutableSharedFlow<ReaderEvent>()
     val events: SharedFlow<ReaderEvent> = _events.asSharedFlow()
@@ -483,6 +486,24 @@ class ReaderViewModel(
             settingsDataStore.updateTtsEngine(if (useEdge) "edge" else "")
         }
     }
+
+    fun setEdgeWifiOnly(enabled: Boolean) {
+        ttsManager.setEdgeWifiOnly(enabled)
+        viewModelScope.launch {
+            settingsDataStore.updateEdgeWifiOnly(enabled)
+        }
+    }
+
+    fun clearEdgeChapter() {
+        ttsManager.clearEdgeChapter()
+    }
+
+    fun clearEdgeCache() {
+        ttsManager.clearEdgeCache()
+    }
+
+    /** Total size of the downloaded Edge audio in bytes (reads the disk, so it runs off the main thread). */
+    suspend fun edgeCacheSize(): Long = withContext(Dispatchers.IO) { ttsManager.edgeCacheSize() }
 
     fun setEdgeVoice(voice: String) {
         viewModelScope.launch {
