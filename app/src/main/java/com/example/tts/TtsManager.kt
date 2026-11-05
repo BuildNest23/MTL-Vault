@@ -540,6 +540,13 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 // Mark as read here, independent of the Reader screen/ViewModel, so it also works when the
                 // screen is off or the reader was closed and TTS keeps going in the background.
                 markChapterReadInBackground(currentChapterId)
+                if (_sleepTimer.value.atChapterEnd) {
+                    AppLogger.i("TtsManager", "Sleep timer: chapter finished, stopping")
+                    _sleepTimer.value = SleepTimerState()
+                    pointToNextChapterInBackground()
+                    stop(triggerServiceStop = true)
+                    return@launch
+                }
                 if (onChapterCompleteCallback != null) {
                     onChapterCompleteCallback?.invoke()
                 } else {
@@ -1054,6 +1061,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     fun stop(triggerServiceStop: Boolean = true) {
         AppLogger.i("TtsManager", "stop() called (triggerServiceStop=$triggerServiceStop)")
+        cancelSleepTimer()
         isSpeakingActive = false
         lastAdvancedChunk = -1
         try {
@@ -1201,6 +1209,75 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         return (_playbackInfo.value.state == TtsState.PLAYING || _playbackInfo.value.state == TtsState.PAUSED) &&
                 currentNovelId == novelId &&
                 currentChapterId == chapterId
+    }
+
+    // ---- Sleep timer: pauses reading after N minutes, or when the current chapter ends ----
+    private val _sleepTimer = MutableStateFlow(SleepTimerState())
+    val sleepTimer: StateFlow<SleepTimerState> = _sleepTimer.asStateFlow()
+    private var sleepJob: Job? = null
+
+    fun setSleepTimerMinutes(minutes: Int) {
+        sleepJob?.cancel()
+        if (minutes <= 0) {
+            _sleepTimer.value = SleepTimerState()
+            sleepJob = null
+            return
+        }
+        val endAt = System.currentTimeMillis() + minutes * 60_000L
+        _sleepTimer.value = SleepTimerState(endAtMs = endAt, minutes = minutes)
+        AppLogger.i("TtsManager", "Sleep timer set: $minutes min")
+        sleepJob = mainScope.launch {
+            delay(minutes * 60_000L)
+            onSleepTimerExpired()
+        }
+    }
+
+    fun setSleepAtChapterEnd() {
+        sleepJob?.cancel()
+        sleepJob = null
+        _sleepTimer.value = SleepTimerState(atChapterEnd = true)
+        AppLogger.i("TtsManager", "Sleep timer set: end of chapter")
+    }
+
+    fun cancelSleepTimer() {
+        sleepJob?.cancel()
+        sleepJob = null
+        if (_sleepTimer.value.active) AppLogger.i("TtsManager", "Sleep timer cancelled")
+        _sleepTimer.value = SleepTimerState()
+    }
+
+    private fun onSleepTimerExpired() {
+        AppLogger.i("TtsManager", "Sleep timer expired: pausing")
+        _sleepTimer.value = SleepTimerState()
+        sleepJob = null
+        if (_playbackInfo.value.state == TtsState.PLAYING) pause()
+    }
+
+    /** After an end-of-chapter sleep, make Play on the novel page continue with the NEXT chapter. */
+    private fun pointToNextChapterInBackground() {
+        val novelId = currentNovelId ?: return
+        val chapterId = currentChapterId ?: return
+        val app = context.applicationContext as? MtlVaultApplication ?: return
+        mainScope.launch {
+            try {
+                val repo = app.novelRepository
+                val current = repo.getChapterByIdSync(chapterId) ?: return@launch
+                val next = repo.getNextChapter(novelId, current.orderIndex) ?: return@launch
+                repo.updateLastChapter(novelId, next.id)
+                repo.updateReadingPosition(next.id, 0)
+            } catch (e: Exception) {
+                AppLogger.w("TtsManager", "Failed to point to next chapter: ${e.message}")
+            }
+        }
+    }
+
+    /** Rough time left in the chapter, from the remaining characters and the speech rate. */
+    fun estimatedRemainingSeconds(): Int {
+        if (chunks.isEmpty()) return 0
+        val from = currentChunkIndex.coerceIn(0, chunks.size)
+        var chars = 0
+        for (i in from until chunks.size) chars += chunks[i].length
+        return (chars / (15f * speechRate.coerceAtLeast(0.1f))).toInt()
     }
 
     /** Current speech rate (1.0 = normal); used to estimate how long a sentence takes to speak. */
