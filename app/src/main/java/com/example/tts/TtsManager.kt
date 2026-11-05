@@ -378,7 +378,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                         paragraphIndex = index,
                         sentenceStart = sub.baseCharOffset,
                         sentenceEnd = sub.endCharOffset,
-                        isSentenceLevel = true
+                        isSentenceLevel = true,
+                        paragraphLength = chunks.getOrNull(index)?.length ?: 0
                     )
                     if (AppLogger.isDetailedLogging) {
                         AppLogger.d("TtsManager", "Highlight sentence: chunk=$index span=${sub.baseCharOffset}-${sub.endCharOffset}")
@@ -401,8 +402,10 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             return
         }
         if (utteranceId != null && utteranceId.startsWith("silence_") &&
-            extractChunkIndex(utteranceId) != currentChunkIndex) {
-            return
+            (extractChunkIndex(utteranceId) != currentChunkIndex ||
+                !utteranceId.startsWith("silence_${currentChapterId}_"))
+        ) {
+            return // pause marker from a paragraph/chapter that is no longer the current one
         }
         if (parsed != null) {
             val finishedChunk = parsed.chunkIndex
@@ -417,6 +420,10 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             }
 
             val silenceId = "silence_${currentChapterId}_$finishedChunk"
+            // The delayed fallbacks below must only act on THIS chapter. For a one-paragraph chapter,
+            // the old chapter's fallback fired inside the next chapter (its paragraph 0 has the same
+            // index) and ended it after ~2 seconds, skipping straight to the chapter after.
+            val chapterAtFinish = currentChapterId
             var silenceQueued = false
             try {
                 val res = engine?.playSilentUtterance(500L, TextToSpeech.QUEUE_ADD, silenceId) ?: TextToSpeech.ERROR
@@ -430,14 +437,16 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 val pauseMs = if (engine == null) EDGE_PARAGRAPH_PAUSE_MS else 800L
                 mainScope.launch {
                     delay(pauseMs)
-                    if (isSpeakingActive && currentChunkIndex == finishedChunk) {
+                    if (isSpeakingActive && currentChapterId == chapterAtFinish && currentChunkIndex == finishedChunk) {
                         advanceToNextChunk(finishedChunk)
                     }
                 }
             } else {
                 mainScope.launch {
                     delay(2500)
-                    if (isSpeakingActive && currentChunkIndex == finishedChunk && lastAdvancedChunk < finishedChunk) {
+                    if (isSpeakingActive && currentChapterId == chapterAtFinish &&
+                        currentChunkIndex == finishedChunk && lastAdvancedChunk < finishedChunk
+                    ) {
                         advanceToNextChunk(finishedChunk)
                     }
                 }
@@ -725,7 +734,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             paragraphIndex = chunkIndex,
             sentenceStart = sentence.start,
             sentenceEnd = sentence.end,
-            isSentenceLevel = true
+            isSentenceLevel = true,
+            paragraphLength = paragraphText.length
         )
     }
 
@@ -1149,6 +1159,9 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 currentNovelId == novelId &&
                 currentChapterId == chapterId
     }
+
+    /** Current speech rate (1.0 = normal); used to estimate how long a sentence takes to speak. */
+    fun currentSpeechRate(): Float = speechRate
 
     fun setSpeechRate(rate: Float) {
         speechRate = rate

@@ -31,6 +31,10 @@ class TtsPlaybackService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var observerJob: Job? = null
+
+    // Latest spoken sentence, so the progress bar can move inside a paragraph, not only between them.
+    @Volatile
+    private var latestHighlight = com.example.tts.TtsHighlightState()
     private var mediaSession: MediaSession? = null
 
     private var isBecomingNoisyRegistered = false
@@ -71,6 +75,9 @@ class TtsPlaybackService : Service() {
         const val NOTIFICATION_ID = 1001
 
         const val CHUNK_UNIT_MS = 10_000L
+
+        /** Rough speaking speed at rate 1.0, used to let the notification bar creep within a sentence. */
+        private const val SPEECH_CHARS_PER_SEC = 15f
 
         const val ACTION_START = "com.example.tts.ACTION_START"
         const val ACTION_PLAY = "com.example.tts.ACTION_PLAY"
@@ -229,6 +236,17 @@ class TtsPlaybackService : Service() {
         val ttsManager = (application as? MtlVaultApplication)?.ttsManager ?: return
         observerJob?.cancel()
         observerJob = serviceScope.launch {
+            // Each new sentence nudges the progress bar forward (paragraph changes alone are too coarse).
+            launch {
+                ttsManager.highlightState.collectLatest { h ->
+                    latestHighlight = h
+                    val info = ttsManager.playbackInfo.value
+                    if (info.state == TtsState.PLAYING && h.paragraphIndex == info.currentChunkIndex) {
+                        updateMediaSessionState(info)
+                        startForegroundCompat(buildNotification(info))
+                    }
+                }
+            }
             ttsManager.playbackInfo.collectLatest { info ->
                 updateMediaSessionState(info)
                 when (info.state) {
@@ -257,6 +275,13 @@ class TtsPlaybackService : Service() {
         }
     }
 
+    /** 0..1 position inside the current paragraph, from the sentence being spoken. */
+    private fun fractionInChunk(info: TtsPlaybackInfo): Float {
+        val h = latestHighlight
+        if (h.paragraphIndex != info.currentChunkIndex || h.paragraphLength <= 0) return 0f
+        return (h.sentenceStart.toFloat() / h.paragraphLength).coerceIn(0f, 1f)
+    }
+
     private fun updateMediaSessionState(info: TtsPlaybackInfo) {
         val session = mediaSession ?: return
         val state = when (info.state) {
@@ -282,9 +307,22 @@ class TtsPlaybackService : Service() {
 
         val totalChunks = info.totalChunks.coerceAtLeast(1)
         val durationMs = totalChunks * CHUNK_UNIT_MS
-        val positionMs = (info.currentChunkIndex.coerceIn(0, totalChunks - 1)) * CHUNK_UNIT_MS
+        val chunkIdx = info.currentChunkIndex.coerceIn(0, totalChunks - 1)
+        val positionMs = ((chunkIdx + fractionInChunk(info)) * CHUNK_UNIT_MS).toLong()
 
-        val speed = if (info.state == TtsState.PLAYING) 1.0f else 0.0f
+        // While playing, let the system bar creep forward through the current sentence at about the
+        // pace it is spoken (a little slower, so it never runs ahead and has to jump back).
+        val h = latestHighlight
+        val speed = if (info.state == TtsState.PLAYING) {
+            val sentenceChars = (h.sentenceEnd - h.sentenceStart).coerceAtLeast(0)
+            if (h.paragraphIndex == info.currentChunkIndex && h.paragraphLength > 0 && sentenceChars > 0) {
+                val rate = ((application as? MtlVaultApplication)?.ttsManager?.currentSpeechRate() ?: 1f)
+                    .coerceAtLeast(0.1f)
+                val barMs = sentenceChars.toFloat() / h.paragraphLength * CHUNK_UNIT_MS
+                val speakMs = sentenceChars / (SPEECH_CHARS_PER_SEC * rate) * 1000f
+                (barMs / speakMs * 0.85f).coerceIn(0.05f, 5f)
+            } else 0.0f
+        } else 0.0f
         val playbackState = PlaybackState.Builder()
             .setActions(actions)
             .addCustomAction(customCloseAction)
@@ -403,8 +441,8 @@ class TtsPlaybackService : Service() {
         val customBigView = RemoteViews(packageName, R.layout.notification_tts_player_big).apply {
             setTextViewText(R.id.tts_notif_title, title)
             setTextViewText(R.id.tts_notif_subtitle, subtitle)
-            val progressPercent = ((info.currentChunkIndex.toFloat() / totalChunks) * 100).toInt()
-            setProgressBar(R.id.tts_notif_progress, 100, progressPercent, false)
+            val progress = (((info.currentChunkIndex + fractionInChunk(info)) / totalChunks) * 1000).toInt()
+            setProgressBar(R.id.tts_notif_progress, 1000, progress.coerceIn(0, 1000), false)
             setImageViewResource(
                 R.id.tts_btn_play_pause,
                 if (isPlaying) R.drawable.ic_tts_pause else R.drawable.ic_tts_play
