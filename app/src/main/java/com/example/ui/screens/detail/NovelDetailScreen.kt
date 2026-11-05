@@ -171,17 +171,28 @@ fun NovelDetailScreen(
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit Novel Info")
                     }
-                    IconButton(
-                        onClick = onOpenReplacements,
-                        modifier = Modifier.testTag("detail_replacements_button")
-                    ) {
-                        Icon(Icons.Default.SwapHoriz, contentDescription = "Replacements")
-                    }
-                    IconButton(
-                        onClick = { showDeleteNovelDialog = true },
-                        modifier = Modifier.testTag("detail_delete_novel_button")
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete Novel", tint = MaterialTheme.colorScheme.error)
+                    // Delete lives in a menu so it can't be tapped by accident next to Edit
+                    var novelMenuOpen by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(
+                            onClick = { novelMenuOpen = true },
+                            modifier = Modifier.testTag("detail_novel_menu_button")
+                        ) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                        }
+                        DropdownMenu(
+                            expanded = novelMenuOpen,
+                            onDismissRequest = { novelMenuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Delete novel", color = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    novelMenuOpen = false
+                                    showDeleteNovelDialog = true
+                                },
+                                modifier = Modifier.testTag("detail_delete_novel_button")
+                            )
+                        }
                     }
                 }
             )
@@ -333,8 +344,22 @@ fun NovelDetailScreen(
                             } ?: chapters.firstOrNull()
                         }
 
+                        // Say where Play will start, so it's never a surprise
+                        val playLabel = if (targetChapter == null) {
+                            "Play"
+                        } else {
+                            val num = originalPositionMap[targetChapter.id] ?: (targetChapter.orderIndex + 1)
+                            val anyRead = chapters.any { it.read }
+                            when {
+                                !targetChapter.read && targetChapter.readingParagraphIndex > 0 ->
+                                    "Continue \u00B7 Ch. $num, para ${targetChapter.readingParagraphIndex + 1}"
+                                currentNovel.lastChapterId.isNullOrBlank() && !anyRead -> "Start \u00B7 Ch. $num"
+                                else -> "Play \u00B7 Ch. $num"
+                            }
+                        }
+
                         MtlActionButton(
-                            text = "Play",
+                            text = playLabel,
                             icon = Icons.Default.PlayArrow,
                             onClick = {
                                 if (targetChapter != null) {
