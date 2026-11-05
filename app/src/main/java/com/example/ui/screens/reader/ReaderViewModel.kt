@@ -401,6 +401,18 @@ class ReaderViewModel(
         ttsManager.nextChunk()
     }
 
+    /** Jump to a paragraph (used by the player's seek bar). */
+    fun seekTtsToParagraph(index: Int) {
+        ttsManager.seekToChunk(index)
+    }
+
+    fun ttsRemainingSeconds(): Int = ttsManager.estimatedRemainingSeconds()
+
+    val ttsSleepTimer: StateFlow<com.example.tts.SleepTimerState> = ttsManager.sleepTimer
+    fun setSleepTimerMinutes(minutes: Int) = ttsManager.setSleepTimerMinutes(minutes)
+    fun setSleepAtChapterEnd() = ttsManager.setSleepAtChapterEnd()
+    fun cancelSleepTimer() = ttsManager.cancelSleepTimer()
+
     private fun playCurrentChapterTts(startFromChunkIndex: Int = 0) {
         val chapter = _currentChapter.value ?: return
         viewModelScope.launch {

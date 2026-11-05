@@ -149,6 +149,7 @@ fun ReaderScreen(
     val renderedContent by viewModel.renderedContent.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val ttsInfo by viewModel.ttsPlaybackInfo.collectAsStateWithLifecycle()
+    val sleepTimer by viewModel.ttsSleepTimer.collectAsStateWithLifecycle()
     val edgeProgress by viewModel.edgeProgress.collectAsStateWithLifecycle()
     val chaptersList by viewModel.chaptersList.collectAsStateWithLifecycle()
     val initialParagraphIndex by viewModel.initialParagraphIndex.collectAsStateWithLifecycle()
@@ -385,6 +386,11 @@ fun ReaderScreen(
         onDispose { activityOwner?.lifecycle?.removeObserver(observer) }
     }
 
+    // Rough "time left" for the player; recalculated whenever the spoken paragraph or speed changes
+    val remainingSeconds = remember(ttsInfo.currentChunkIndex, ttsInfo.totalChunks, ttsInfo.chapterId, settings.ttsRate) {
+        viewModel.ttsRemainingSeconds()
+    }
+
     // Determine colors based on reading theme
     val (bgColor, textColor, topBarBg) = when (settings.theme) {
         "sepia" -> Triple(ReaderSepiaBg, ReaderSepiaText, Color(0xFFEFE4C8))
@@ -504,8 +510,10 @@ fun ReaderScreen(
                     controlsVisible = !controlsVisible
                 },
             contentPadding = PaddingValues(
-                horizontal = 20.dp,
-                vertical = 60.dp
+                start = 20.dp,
+                end = 20.dp,
+                top = 60.dp,
+                bottom = 150.dp // keeps the end of the chapter clear of the docked player
             ),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -692,8 +700,50 @@ fun ReaderScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = topBarBg.copy(alpha = 0.95f)
+                    containerColor = topBarBg
                 )
+            )
+        }
+
+        // Floating Compact TTS Control Bar (collapsible or hides with controls)
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            TtsPlayerBar(
+                playbackInfo = ttsInfo,
+                speechRate = settings.ttsRate,
+                speechPitch = settings.ttsPitch,
+                onPlayPause = {
+                    requestNotificationPermissionIfNeeded()
+                    val visiblePara = maxOf(0, lazyListState.firstVisibleItemIndex - 1)
+                    viewModel.toggleTts(visiblePara)
+                },
+                onStop = { viewModel.stopTts() },
+                onPrevChapter = { viewModel.prevChapter() },
+                onNextChapter = { viewModel.nextChapter() },
+                onPrevParagraph = { viewModel.prevParagraph() },
+                onNextParagraph = { viewModel.nextParagraph() },
+                onSeek = { viewModel.seekTtsToParagraph(it) },
+                remainingSeconds = remainingSeconds,
+                sleepTimer = sleepTimer,
+                onSetSleepMinutes = { viewModel.setSleepTimerMinutes(it) },
+                onSetSleepAtChapterEnd = { viewModel.setSleepAtChapterEnd() },
+                onCancelSleep = { viewModel.cancelSleepTimer() },
+                onRateChange = { viewModel.setTtsRate(it) },
+                onPitchChange = { viewModel.setTtsPitch(it) },
+                useEdge = settings.ttsEngine == "edge",
+                edgeVoice = settings.edgeVoice,
+                onUseEdgeChange = { viewModel.setUseEdgeVoices(it) },
+                onEdgeVoiceChange = { viewModel.setEdgeVoice(it) },
+                edgeProgress = edgeProgress,
+                edgeWifiOnly = settings.edgeWifiOnly,
+                onEdgeWifiOnlyChange = { viewModel.setEdgeWifiOnly(it) },
+                onClearEdgeChapter = { viewModel.clearEdgeChapter() },
+                onClearEdgeCache = { viewModel.clearEdgeCache() },
+                loadEdgeCacheSize = { viewModel.edgeCacheSize() }
             )
         }
 
@@ -714,43 +764,6 @@ fun ReaderScreen(
             trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
             strokeCap = StrokeCap.Square
         )
-
-        // Floating Compact TTS Control Bar (collapsible or hides with controls)
-        AnimatedVisibility(
-            visible = controlsVisible,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 12.dp)
-        ) {
-            TtsPlayerBar(
-                playbackInfo = ttsInfo,
-                speechRate = settings.ttsRate,
-                speechPitch = settings.ttsPitch,
-                onPlayPause = {
-                    requestNotificationPermissionIfNeeded()
-                    val visiblePara = maxOf(0, lazyListState.firstVisibleItemIndex - 1)
-                    viewModel.toggleTts(visiblePara)
-                },
-                onStop = { viewModel.stopTts() },
-                onPrevChapter = { viewModel.prevChapter() },
-                onNextChapter = { viewModel.nextChapter() },
-                onRateChange = { viewModel.setTtsRate(it) },
-                onPitchChange = { viewModel.setTtsPitch(it) },
-                useEdge = settings.ttsEngine == "edge",
-                edgeVoice = settings.edgeVoice,
-                onUseEdgeChange = { viewModel.setUseEdgeVoices(it) },
-                onEdgeVoiceChange = { viewModel.setEdgeVoice(it) },
-                edgeProgress = edgeProgress,
-                edgeWifiOnly = settings.edgeWifiOnly,
-                onEdgeWifiOnlyChange = { viewModel.setEdgeWifiOnly(it) },
-                onClearEdgeChapter = { viewModel.clearEdgeChapter() },
-                onClearEdgeCache = { viewModel.clearEdgeCache() },
-                loadEdgeCacheSize = { viewModel.edgeCacheSize() }
-            )
-        }
     }
     }
 
