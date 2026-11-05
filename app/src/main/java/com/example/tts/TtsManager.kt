@@ -37,10 +37,26 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
          */
         fun parseParagraphs(content: String, maxChars: Int = Int.MAX_VALUE): List<String> {
             if (content.isBlank()) return emptyList()
-            return content.split(Regex("(\r?\n){2,}"))
+            val blocks = content.split(Regex("(\r?\n){2,}"))
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
+
+            // Some chapters have no blank lines between paragraphs, so the whole chapter came out as ONE
+            // block ("Reading part 1 of 1", no progress, no paragraph skipping). Break such a block up:
+            // first at single line breaks, otherwise into sentence groups.
+            if (blocks.size == 1 && blocks[0].length > SINGLE_BLOCK_SPLIT_THRESHOLD) {
+                val lines = blocks[0].split(Regex("\r?\n"))
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                if (lines.size > 1) return lines
+                return ParagraphSplitter.splitSingleParagraph(blocks[0], SINGLE_BLOCK_SPLIT_CHARS)
+            }
+            return blocks
         }
+
+        /** A chapter that is one block longer than this is split into smaller paragraphs. */
+        private const val SINGLE_BLOCK_SPLIT_THRESHOLD = 2000
+        private const val SINGLE_BLOCK_SPLIT_CHARS = 600
 
         fun parseParagraphChunks(content: String, maxChars: Int = Int.MAX_VALUE): List<ParagraphChunk> {
             return ParagraphSplitter.parseParagraphChunks(content, maxChars)
