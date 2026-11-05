@@ -67,6 +67,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
@@ -678,10 +679,11 @@ fun NovelDetailScreen(
                             ),
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isSelected) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.surface
+                            containerColor = when {
+                                isSelected -> MaterialTheme.colorScheme.primaryContainer
+                                // the chapter you're in the middle of gets a soft tint
+                                isCurrent && !ch.read -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                                else -> MaterialTheme.colorScheme.surface
                             }
                         ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp)
@@ -689,6 +691,7 @@ fun NovelDetailScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .alpha(if (ch.read && !isCurrent && !isSpeaking && !isSelected) 0.6f else 1f)
                                 .padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -743,7 +746,21 @@ fun NovelDetailScreen(
                                         modifier = Modifier.weight(1f, fill = false)
                                     )
 
-                                    if (isCurrent) {
+                                    if (isCurrent && !ch.read) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = MaterialTheme.colorScheme.primary
+                                        ) {
+                                            Text(
+                                                text = "Continue",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onPrimary,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    } else if (isCurrent) {
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Box(
                                             modifier = Modifier
@@ -773,49 +790,64 @@ fun NovelDetailScreen(
                                 Spacer(modifier = Modifier.height(2.dp))
 
                                 val readMin = maxOf(1, ch.wordCount / 180)
+                                val readingPrefix = if (isCurrent && !ch.read && ch.readingParagraphIndex > 0) {
+                                    "Reading, paragraph ${ch.readingParagraphIndex + 1} • "
+                                } else ""
                                 Text(
-                                    text = "${String.format("%,d", ch.wordCount)} words • ~$readMin min read",
+                                    text = "$readingPrefix${String.format("%,d", ch.wordCount)} words • ~$readMin min read",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
 
-                            // Quick chapter actions
+                            // Chapter actions live in one menu (keeps rows calm and Delete away from the others)
                             if (!isSelectionMode) {
-                                IconButton(
-                                    onClick = { viewModel.toggleChapterRead(ch.id) },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (ch.read) Icons.Filled.CheckCircle else Icons.Outlined.CheckCircle,
-                                        contentDescription = "Toggle Read Status",
-                                        tint = if (ch.read) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = { onOpenEditor(ch.id) },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Edit Chapter",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = { chapterToDeleteId = ch.id },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Delete Chapter",
-                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                var rowMenuOpen by remember { mutableStateOf(false) }
+                                Box {
+                                    IconButton(
+                                        onClick = { rowMenuOpen = true },
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .testTag("chapter_row_menu_${ch.id}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.MoreVert,
+                                            contentDescription = "Chapter actions",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = rowMenuOpen,
+                                        onDismissRequest = { rowMenuOpen = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(if (ch.read) "Mark as unread" else "Mark as read") },
+                                            onClick = {
+                                                rowMenuOpen = false
+                                                viewModel.toggleChapterRead(ch.id)
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Edit chapter") },
+                                            onClick = {
+                                                rowMenuOpen = false
+                                                onOpenEditor(ch.id)
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    "Delete chapter",
+                                                    color = MaterialTheme.colorScheme.error
+                                                )
+                                            },
+                                            onClick = {
+                                                rowMenuOpen = false
+                                                chapterToDeleteId = ch.id
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
