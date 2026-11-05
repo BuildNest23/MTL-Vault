@@ -646,6 +646,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         val longestChunk = chunks.maxOfOrNull { it.length } ?: 0
         AppLogger.i("TtsManager", "playChapter: novelId=$novelId, chapterId=$chapterId, title=$chapterTitle, chunks=${chunks.size}, maxChunkLen=$longestChunk, startIndex=$startFromChunkIndex, maxChars=$maxChars")
 
+        saveProgressInBackground(currentChunkIndex)
+
         if (chunks.isEmpty()) {
             AppLogger.w("TtsManager", "playChapter: chunks empty for chapterId=$chapterId")
             _playbackInfo.value = TtsPlaybackInfo(
@@ -761,6 +763,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             onChapterCompleteCallback?.invoke()
             return
         }
+
+        saveProgressInBackground(index)
 
         val paragraphText = chunks[index]
         val sentences = chapterSentences.getOrNull(index) ?: SentenceSplitter.splitIntoSentences(paragraphText)
@@ -1023,6 +1027,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         abandonAudioFocus()
         _playbackInfo.value = _playbackInfo.value.copy(state = TtsState.PAUSED)
         AppLogger.i("TtsManager", "Playback state: PAUSED")
+        // The app is often closed or killed right after pausing, so write the position now.
+        saveProgressInBackground(currentChunkIndex)
     }
 
     fun resume() {
@@ -1111,6 +1117,27 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 AppLogger.i("TtsManager", "Marked chapter as read: $id")
             } catch (e: Exception) {
                 AppLogger.w("TtsManager", "Failed to mark chapter read: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Remembers which chapter and paragraph TTS is on, independent of the reader screen. Without this,
+     * when TTS moved to the next chapter on its own (reader closed / screen off) the novel still
+     * pointed at the previous chapter, so Play on the novel page restarted the old chapter.
+     */
+    private fun saveProgressInBackground(chunkIndex: Int) {
+        val novelId = currentNovelId ?: return
+        val chapterId = currentChapterId ?: return
+        if (chunks.isEmpty()) return
+        val paragraph = chunkIndex.coerceIn(0, chunks.size - 1)
+        val app = context.applicationContext as? MtlVaultApplication ?: return
+        mainScope.launch {
+            try {
+                app.novelRepository.updateLastChapter(novelId, chapterId)
+                app.novelRepository.updateReadingPosition(chapterId, paragraph)
+            } catch (e: Exception) {
+                AppLogger.w("TtsManager", "Failed to save TTS position: ${e.message}")
             }
         }
     }
