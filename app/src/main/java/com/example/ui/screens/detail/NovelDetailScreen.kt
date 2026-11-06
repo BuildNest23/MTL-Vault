@@ -350,14 +350,13 @@ fun NovelDetailScreen(
                         } else {
                             val anyRead = chapters.any { it.read }
                             val resuming = !targetChapter.read && targetChapter.readingParagraphIndex > 0
-                            val maxTitle = if (resuming) 18 else 26
+                            val maxTitle = 26
                             val rawTitle = targetChapter.title.trim()
                             val shortTitle = if (rawTitle.length > maxTitle) {
                                 rawTitle.take(maxTitle - 1).trimEnd() + "\u2026"
                             } else rawTitle
                             when {
-                                resuming ->
-                                    "Continue \u00B7 $shortTitle, para ${targetChapter.readingParagraphIndex + 1}"
+                                resuming -> "Continue \u00B7 $shortTitle"
                                 currentNovel.lastChapterId.isNullOrBlank() && !anyRead -> "Start \u00B7 $shortTitle"
                                 else -> "Play \u00B7 $shortTitle"
                             }
@@ -783,7 +782,7 @@ fun NovelDetailScreen(
                                             color = MaterialTheme.colorScheme.primary
                                         ) {
                                             Text(
-                                                text = "Continue",
+                                                text = "Reading",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onPrimary,
                                                 fontWeight = FontWeight.Bold,
@@ -821,10 +820,14 @@ fun NovelDetailScreen(
 
                                 val readMin = maxOf(1, ch.wordCount / 180)
                                 val readingPrefix = if (isCurrent && !ch.read && ch.readingParagraphIndex > 0) {
-                                    "Reading, paragraph ${ch.readingParagraphIndex + 1} • "
+                                    "Paragraph ${ch.readingParagraphIndex + 1} • "
                                 } else ""
                                 Text(
-                                    text = "$readingPrefix${String.format("%,d", ch.wordCount)} words • ~$readMin min read",
+                                    text = if (readingPrefix.isNotEmpty()) {
+                                        "$readingPrefix${String.format("%,d", ch.wordCount)} words • ~$readMin min"
+                                    } else {
+                                        "${String.format("%,d", ch.wordCount)} words • ~$readMin min read"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
