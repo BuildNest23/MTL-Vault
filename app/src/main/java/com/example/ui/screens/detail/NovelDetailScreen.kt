@@ -344,17 +344,22 @@ fun NovelDetailScreen(
                             } ?: chapters.firstOrNull()
                         }
 
-                        // Say where Play will start, so it's never a surprise
+                        // Say where Play will start (real chapter title, shortened so it never looks awkward)
                         val playLabel = if (targetChapter == null) {
                             "Play"
                         } else {
-                            val num = originalPositionMap[targetChapter.id] ?: (targetChapter.orderIndex + 1)
                             val anyRead = chapters.any { it.read }
+                            val resuming = !targetChapter.read && targetChapter.readingParagraphIndex > 0
+                            val maxTitle = if (resuming) 18 else 26
+                            val rawTitle = targetChapter.title.trim()
+                            val shortTitle = if (rawTitle.length > maxTitle) {
+                                rawTitle.take(maxTitle - 1).trimEnd() + "\u2026"
+                            } else rawTitle
                             when {
-                                !targetChapter.read && targetChapter.readingParagraphIndex > 0 ->
-                                    "Continue \u00B7 Ch. $num, para ${targetChapter.readingParagraphIndex + 1}"
-                                currentNovel.lastChapterId.isNullOrBlank() && !anyRead -> "Start \u00B7 Ch. $num"
-                                else -> "Play \u00B7 Ch. $num"
+                                resuming ->
+                                    "Continue \u00B7 $shortTitle, para ${targetChapter.readingParagraphIndex + 1}"
+                                currentNovel.lastChapterId.isNullOrBlank() && !anyRead -> "Start \u00B7 $shortTitle"
+                                else -> "Play \u00B7 $shortTitle"
                             }
                         }
 
