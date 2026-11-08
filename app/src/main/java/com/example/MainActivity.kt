@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
             val dynamicColorFlow = remember { app.settingsDataStore.dynamicColorFlow }
             // null until the saved value is read (a few milliseconds). Nothing is drawn before that,
             // so there is no colour flash on launch and the main thread is never blocked.
-            val dynamicColor by dynamicColorFlow.collectAsState<Boolean?>(initial = null)
+            val dynamicColor: Boolean? by dynamicColorFlow.collectAsState(initial = null)
             val resolvedDynamicColor = dynamicColor
             if (resolvedDynamicColor != null) {
                 MtlVaultTheme(dynamicColor = resolvedDynamicColor) {
