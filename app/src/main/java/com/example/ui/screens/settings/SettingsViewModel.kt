@@ -20,10 +20,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
 import java.io.File
 import com.example.tts.TtsManager
-import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -144,13 +142,16 @@ class SettingsViewModel(
             val startTime = System.currentTimeMillis()
             AppLogger.i("Backup", "exportBackup started")
             try {
-                val json = repository.getFullBackupJson()
                 val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                val coversDir = File(context.filesDir, "covers")
                 val file = withContext(Dispatchers.IO) {
                     val dir = File(context.cacheDir, "exports")
                     if (!dir.exists()) dir.mkdirs()
                     val f = File(dir, "mtl_vault_backup_$dateStr.json")
-                    f.writeText(json, Charsets.UTF_8)
+                    // Written straight to the file, one novel at a time, so big libraries fit in memory
+                    f.outputStream().buffered().use { out ->
+                        repository.writeBackup(out) { coverUri -> readOwnCover(coversDir, coverUri) }
+                    }
                     f
                 }
 
@@ -180,21 +181,16 @@ class SettingsViewModel(
             val startTime = System.currentTimeMillis()
             AppLogger.i("Backup", "importBackup started with uri=$uri")
             try {
-                val json = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                        BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8)).use { reader ->
-                            reader.readText()
-                        }
-                    } ?: ""
-                }
-
-                if (json.isBlank()) {
-                    AppLogger.w("Backup", "importBackup failed: backup file is blank")
-                    _events.emit(SettingsEvent.ShowToast("Backup file is empty."))
+                val coversDir = File(context.filesDir, "covers")
+                val input = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri) }
+                if (input == null) {
+                    AppLogger.w("Backup", "importBackup failed: could not open the backup file")
+                    _events.emit(SettingsEvent.ShowToast("Couldn't open the backup file."))
                     return@launch
                 }
-
-                repository.restoreFromBackupJson(json)
+                input.use { stream ->
+                    repository.restoreFromBackup(stream) { novelId, bytes -> saveRestoredCover(coversDir, novelId, bytes) }
+                }
                 val duration = System.currentTimeMillis() - startTime
                 AppLogger.i("Backup", "importBackup completed successfully in ${duration}ms")
                 _events.emit(SettingsEvent.ShowToast("Backup restored successfully!"))
@@ -202,6 +198,33 @@ class SettingsViewModel(
                 AppLogger.e("Backup", "importBackup failed", e)
                 _events.emit(SettingsEvent.ShowToast("Import failed: ${e.localizedMessage}"))
             }
+        }
+    }
+
+    /** Reads a cover file the app saved itself (inside the covers folder), or null for anything else. */
+    private fun readOwnCover(coversDir: File, coverUri: String): ByteArray? {
+        return try {
+            val uri = Uri.parse(coverUri)
+            if (uri.scheme != "file") return null
+            val file = File(uri.path ?: return null)
+            if (!file.isFile || file.parentFile?.canonicalPath != coversDir.canonicalPath) return null
+            if (file.length() > 6L * 1024 * 1024) return null
+            file.readBytes()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Saves a cover picture found inside a backup into the covers folder and returns its address. */
+    private fun saveRestoredCover(coversDir: File, novelId: String, bytes: ByteArray): String? {
+        return try {
+            coversDir.mkdirs()
+            val safeId = novelId.replace(Regex("[^A-Za-z0-9_-]"), "_")
+            val file = File(coversDir, "${safeId}_${System.currentTimeMillis()}.jpg")
+            file.writeBytes(bytes)
+            Uri.fromFile(file).toString()
+        } catch (e: Exception) {
+            null
         }
     }
 

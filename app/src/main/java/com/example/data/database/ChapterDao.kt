@@ -1,7 +1,6 @@
 package com.example.data.database
 
 import androidx.room.Dao
-import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -56,6 +55,14 @@ interface ChapterDao {
 
     @Update
     suspend fun updateChapter(chapter: ChapterEntity)
+
+    /** Saves only the text fields, so reading progress that changed meanwhile is never overwritten. */
+    @Query("UPDATE chapters SET title = :title, content = :content, wordCount = :wordCount, updatedAt = :updatedAt WHERE id = :chapterId")
+    suspend fun updateChapterText(chapterId: String, title: String, content: String, wordCount: Int, updatedAt: Long)
+
+    /** Lowest chapter position among the given ids (null when none exist). */
+    @Query("SELECT MIN(orderIndex) FROM chapters WHERE id IN (:ids)")
+    suspend fun getMinOrderIndexForIds(ids: List<String>): Int?
 
     @Query("UPDATE chapters SET read = :read, readAt = :readAt WHERE id = :chapterId")
     suspend fun updateReadStatus(chapterId: String, read: Boolean, readAt: Long?)

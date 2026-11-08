@@ -7,15 +7,12 @@ import com.example.data.database.entities.NovelEntity
 import com.example.data.model.ChapterSummary
 import com.example.data.model.NovelSummary
 import com.example.data.preferences.SettingsDataStore
-import com.example.importexport.BackupData
 import com.example.importexport.BackupRestoreManager
 import com.example.importexport.ChapterSplitter
-import com.example.importexport.NovelWithChaptersBackup
 import com.example.importexport.SplitChapterResult
 import com.example.replacement.ReplacementEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import androidx.room.withTransaction
 import com.example.data.database.AppDatabase
@@ -28,6 +25,10 @@ class NovelRepository(
     private val settingsDataStore: SettingsDataStore,
     private val database: AppDatabase? = null
 ) {
+
+    /** Runs [block] in one database transaction when a database is available. */
+    private suspend fun <T> inTransaction(block: suspend () -> T): T =
+        if (database != null) database.withTransaction { block() } else block()
 
     fun getNovelSummaries(): Flow<List<NovelSummary>> {
         return novelDao.getNovelSummaries()
@@ -111,7 +112,7 @@ class NovelRepository(
         }
     }
 
-    suspend fun addChapter(novelId: String, title: String, content: String): String = withContext(Dispatchers.IO) {
+    suspend fun addChapter(novelId: String, title: String, content: String): String = withContext(Dispatchers.IO) { inTransaction {
         val maxOrder = chapterDao.getMaxOrderIndex(novelId) ?: -1
         val newOrder = maxOrder + 1
         val id = "c_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().take(8)
@@ -129,12 +130,18 @@ class NovelRepository(
         chapterDao.insertChapter(chapter)
         touchNovelKeepingProgress(novelId, id)
         id
-    }
+    } }
 
-    suspend fun updateChapter(chapter: ChapterEntity) = withContext(Dispatchers.IO) {
-        com.example.replacement.ReplacementEngine.invalidateChapter(chapter.id)
-        val wc = ChapterSplitter.countWords(chapter.content)
-        chapterDao.updateChapter(chapter.copy(wordCount = wc, updatedAt = System.currentTimeMillis()))
+    /** Saves an edited title and text without touching read state or reading position. */
+    suspend fun updateChapterText(chapter: ChapterEntity, title: String, content: String) = withContext(Dispatchers.IO) {
+        ReplacementEngine.invalidateChapter(chapter.id)
+        chapterDao.updateChapterText(
+            chapterId = chapter.id,
+            title = title,
+            content = content,
+            wordCount = ChapterSplitter.countWords(content),
+            updatedAt = System.currentTimeMillis()
+        )
         touchNovelKeepingProgress(chapter.novelId, chapter.id)
     }
 
@@ -171,16 +178,22 @@ class NovelRepository(
     suspend fun deleteChapters(novelId: String, ids: List<String>) = withContext(Dispatchers.IO) {
         if (ids.isEmpty()) return@withContext
         val runBlock: suspend () -> Unit = {
+            // Remember where the deleted block started, before the rows are gone
+            val firstDeletedOrder = ids.chunked(500)
+                .mapNotNull { chunk -> chapterDao.getMinOrderIndexForIds(chunk) }
+                .minOrNull()
             // Delete in chunks of 500 ids to avoid SQLite variable limit
             ids.chunked(500).forEach { chunk ->
                 chapterDao.deleteChaptersByIds(chunk)
             }
 
-            // Set novel.lastChapterId to fallback remaining chapter if it was deleted
+            // Set novel.lastChapterId to the nearest following chapter (else the last one) if it was deleted
             val novel = novelDao.getNovelByIdSync(novelId)
             val idSet = ids.toSet()
             if (novel != null && novel.lastChapterId != null && idSet.contains(novel.lastChapterId)) {
-                val fallbackChapterId = chapterDao.getLastChapterId(novelId)
+                val fallbackChapterId =
+                    (if (firstDeletedOrder != null) chapterDao.getFirstChapterIdFrom(novelId, firstDeletedOrder) else null)
+                        ?: chapterDao.getLastChapterId(novelId)
                 novelDao.updateLastChapter(novelId, fallbackChapterId)
             }
 
@@ -235,9 +248,10 @@ class NovelRepository(
         val startTime = System.currentTimeMillis()
         com.example.logging.AppLogger.i("Import", "importChapters started: novelId=$novelId, count=${chapters.size}")
         try {
+            val entities = inTransaction {
             val currentMaxOrder = chapterDao.getMaxOrderIndex(novelId) ?: -1
             var nextOrder = currentMaxOrder + 1
-            val entities = chapters.map { ch ->
+            val built = chapters.map { ch ->
                 ChapterEntity(
                     id = "c_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().take(12),
                     novelId = novelId,
@@ -249,8 +263,10 @@ class NovelRepository(
                     updatedAt = System.currentTimeMillis()
                 )
             }
-            chapterDao.insertChapters(entities)
-            touchNovelKeepingProgress(novelId, entities.firstOrNull()?.id)
+            built.chunked(500).forEach { chapterDao.insertChapters(it) }
+            touchNovelKeepingProgress(novelId, built.firstOrNull()?.id)
+            built
+            }
             val duration = System.currentTimeMillis() - startTime
             com.example.logging.AppLogger.i("Import", "importChapters finished: inserted=${entities.size} in ${duration}ms")
             entities.size
@@ -394,37 +410,48 @@ class NovelRepository(
         "Chapter $nextNum"
     }
 
-    suspend fun getFullBackupJson(): String = withContext(Dispatchers.IO) {
+    /**
+     * Writes the whole library to [out] without ever holding more than one novel in memory.
+     * [readCover] gives the bytes of a saved cover picture so it is included in the backup.
+     */
+    suspend fun writeBackup(out: java.io.OutputStream, readCover: (String) -> ByteArray?) = withContext(Dispatchers.IO) {
         val novels = novelDao.getAllNovels().first()
-        val backupItems = novels.map { novel ->
-            val chapters = chapterDao.getChaptersForNovelSync(novel.id)
-            NovelWithChaptersBackup(novel, chapters)
-        }
         val settings = settingsDataStore.settingsFlow.first()
-        BackupRestoreManager.generateBackupJson(backupItems, settings)
+        BackupRestoreManager.writeBackupStream(
+            out = out,
+            novels = novels,
+            settings = settings,
+            loadChapters = { id -> chapterDao.getChaptersForNovelSync(id) },
+            readCover = readCover
+        )
     }
 
-    suspend fun restoreFromBackupJson(jsonString: String) = withContext(Dispatchers.IO) {
-        val backupData = BackupRestoreManager.parseBackupJson(jsonString)
-        val performDbRestore = suspend {
+    /**
+     * Restores a backup from [input], one novel at a time. Everything happens in one database
+     * transaction, so a damaged file leaves the current library untouched.
+     * [saveCover] stores an embedded cover picture and returns its file address.
+     */
+    suspend fun restoreFromBackup(
+        input: java.io.InputStream,
+        saveCover: (novelId: String, bytes: ByteArray) -> String?
+    ) = withContext(Dispatchers.IO) {
+        var restoredSettings: com.example.data.model.ReaderSettings? = null
+        val performDbRestore: suspend () -> Unit = {
             chapterDao.deleteAllChapters()
             novelDao.deleteAllNovels()
-            for (item in backupData.novels) {
+            restoredSettings = BackupRestoreManager.readBackupStream(input, saveCover) { item ->
                 novelDao.insertNovel(item.novel)
-                if (item.chapters.isNotEmpty()) {
-                    chapterDao.insertChapters(item.chapters)
-                }
+                // Insert in slices so a huge novel never builds one enormous SQL batch
+                item.chapters.chunked(200).forEach { chapterDao.insertChapters(it) }
             }
         }
         if (database != null) {
-            database.withTransaction {
-                performDbRestore()
-            }
+            database.withTransaction { performDbRestore() }
         } else {
             performDbRestore()
         }
         ReplacementEngine.invalidateCache()
-        backupData.settings?.let { restored ->
+        restoredSettings?.let { restored ->
             // Backups don't store these two, so keep the device's current values
             val current = settingsDataStore.settingsFlow.first()
             settingsDataStore.saveAllSettings(

@@ -16,8 +16,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 
 class MainActivity : ComponentActivity() {
 
@@ -44,21 +42,23 @@ class MainActivity : ComponentActivity() {
 
         val app = application as MtlVaultApplication
         setContent {
-            val dynamicColorFlow = app.settingsDataStore.dynamicColorFlow
-            // Read the saved value up front so there's no green flash on launch
-            val dynamicColor by dynamicColorFlow.collectAsState(
-                initial = remember { runBlocking { dynamicColorFlow.first() } }
-            )
-            MtlVaultTheme(dynamicColor = dynamicColor) {
-                MtlVaultNavGraph(
-                    application = app,
-                    intent = currentIntentState.value,
-                    onIntentConsumed = {
-                        // Drop the flag so rotation / recreation doesn't re-open the reader
-                        intent?.removeExtra("OPEN_READER")
-                        currentIntentState.value = null
-                    }
-                )
+            val dynamicColorFlow = remember { app.settingsDataStore.dynamicColorFlow }
+            // null until the saved value is read (a few milliseconds). Nothing is drawn before that,
+            // so there is no colour flash on launch and the main thread is never blocked.
+            val dynamicColor by dynamicColorFlow.collectAsState<Boolean?>(initial = null)
+            val resolvedDynamicColor = dynamicColor
+            if (resolvedDynamicColor != null) {
+                MtlVaultTheme(dynamicColor = resolvedDynamicColor) {
+                    MtlVaultNavGraph(
+                        application = app,
+                        intent = currentIntentState.value,
+                        onIntentConsumed = {
+                            // Drop the flag so rotation / recreation doesn't re-open the reader
+                            intent?.removeExtra("OPEN_READER")
+                            currentIntentState.value = null
+                        }
+                    )
+                }
             }
         }
     }

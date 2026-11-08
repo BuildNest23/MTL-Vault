@@ -70,11 +70,11 @@ class ChapterEditorViewModel(
 
         viewModelScope.launch {
             if (initialEntity != null) {
-                repository.updateChapter(
-                    initialEntity!!.copy(
-                        title = curTitle.ifBlank { initialEntity!!.title },
-                        content = curContent
-                    )
+                val original = initialEntity!!
+                repository.updateChapterText(
+                    chapter = original,
+                    title = curTitle.ifBlank { original.title },
+                    content = curContent
                 )
                 _events.emit(EditorEvent.ShowToast("Chapter updated."))
             } else {

@@ -1,6 +1,6 @@
 package com.example.ui.navigation
 
-import androidx.compose.foundation.layout.Box
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -16,7 +16,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.example.tts.TtsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModel
@@ -164,7 +163,7 @@ fun MtlVaultNavGraph(
     )
 
     // The small audiobook player sits above the tab bar while a book is loaded
-    val audioPlayerState by application.audioController.state.collectAsState()
+    val audioPlayerState by application.audioController.state.collectAsStateWithLifecycle()
 
     Scaffold(
         bottomBar = {
@@ -328,7 +327,7 @@ fun MtlVaultNavGraph(
                         NovelDetailViewModel(novelId, application.novelRepository, application.settingsDataStore)
                     }
                 )
-                val ttsInfo by application.ttsManager.playbackInfo.collectAsState()
+                val ttsInfo by application.ttsManager.playbackInfo.collectAsStateWithLifecycle()
                 NovelDetailScreen(
                     viewModel = viewModel,
                     ttsInfo = ttsInfo,

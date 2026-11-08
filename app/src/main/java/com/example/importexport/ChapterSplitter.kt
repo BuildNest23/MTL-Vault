@@ -19,7 +19,7 @@ object ChapterSplitter {
     private val AUTO_CHAPTER_REGEX = Pattern.compile(
         // Heading words must stand alone ("Chapter 5", "Chapter One"); the short forms "ch"/"c."
         // need a number. This stops ordinary lines such as "Carefully he..." from matching.
-        "^\\s*(?:(?:chapter|chapitre|capítulo|capitulo|अध्याय|باب)(?![\\p{L}\\p{M}\\p{N}]).*|(?:ch\\.?|c\\.)\\s*[0-9]+[a-zA-Z]?\\b.*|第.*)$",
+        "^\\s*(?:(?:chapter|chapitre|capítulo|capitulo|अध्याय|باب)(?![\\p{L}\\p{M}\\p{N}]).*|(?:ch\\.?|c\\.)\\s*[0-9]+[a-zA-Z]?\\b.*|第\\s*[0-9０-９零〇一二三四五六七八九十百千万两]+\\s*[章节節回卷话話部集篇].*)$",
         Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
     )
 
@@ -134,14 +134,17 @@ object ChapterSplitter {
 
     fun countWords(text: String): Int {
         if (text.isBlank()) return 0
-        // Handle both Western whitespace words and CJK characters
+        // Handle both Western whitespace words and CJK characters (by code point, so rare
+        // characters outside the basic plane are counted correctly too)
         var count = 0
         var inWord = false
-        for (i in 0 until text.length) {
-            val c = text[i]
-            if (Character.isWhitespace(c)) {
+        var i = 0
+        while (i < text.length) {
+            val cp = text.codePointAt(i)
+            i += Character.charCount(cp)
+            if (Character.isWhitespace(cp)) {
                 inWord = false
-            } else if (isCjk(c)) {
+            } else if (isCjk(cp)) {
                 count++
                 inWord = false
             } else {
@@ -154,11 +157,13 @@ object ChapterSplitter {
         return count
     }
 
-    private fun isCjk(c: Char): Boolean {
-        val block = Character.UnicodeBlock.of(c)
+    private fun isCjk(cp: Int): Boolean {
+        val block = Character.UnicodeBlock.of(cp)
         return block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
                 block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A ||
                 block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B ||
+                block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_C ||
+                block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_D ||
                 block == Character.UnicodeBlock.HIRAGANA ||
                 block == Character.UnicodeBlock.KATAKANA ||
                 block == Character.UnicodeBlock.HANGUL_SYLLABLES

@@ -3,8 +3,16 @@ package com.example.importexport
 import com.example.data.database.entities.ChapterEntity
 import com.example.data.database.entities.NovelEntity
 import com.example.data.model.ReaderSettings
+import android.util.Base64
+import android.util.JsonReader
+import android.util.JsonToken
+import android.util.JsonWriter
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.InputStream
+import java.io.InputStreamReader
+import java.io.OutputStream
+import java.io.OutputStreamWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -177,5 +185,366 @@ object BackupRestoreManager {
         }
 
         return BackupData(novelsList, parsedSettings)
+    }
+
+    // ====================================================================================
+    // Streaming backup / restore. Only one novel is held in memory at a time, so large
+    // libraries don't run out of memory. The file format is the same as generateBackupJson,
+    // with two optional extra novel fields: "coverData" (base64) and "coverExt".
+    // ====================================================================================
+
+    private const val MAX_COVER_BYTES = 6 * 1024 * 1024
+
+    /**
+     * Writes a backup straight to [out]. [loadChapters] is asked for one novel's chapters at a
+     * time, and [readCover] returns the bytes of a novel's saved cover (or null) so the picture
+     * travels with the backup.
+     */
+    suspend fun writeBackupStream(
+        out: OutputStream,
+        novels: List<NovelEntity>,
+        settings: ReaderSettings,
+        loadChapters: suspend (String) -> List<ChapterEntity>,
+        readCover: (String) -> ByteArray?
+    ) {
+        val writer = JsonWriter(OutputStreamWriter(out, Charsets.UTF_8).buffered())
+        writer.beginObject()
+        writer.name("app").value("MTLVault")
+        writer.name("version").value(1)
+        writer.name("exportedAt").value(SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date()))
+        writer.name("data").beginObject()
+        writer.name("novels").beginArray()
+        for (novel in novels) {
+            val chapters = loadChapters(novel.id)
+            writer.beginObject()
+            writer.name("id").value(novel.id)
+            writer.name("title").value(novel.title)
+            writer.name("author").value(novel.author)
+            writer.name("translator").value(novel.translator)
+            writer.name("description").value(novel.description)
+            writer.name("cover").value(novel.coverUri ?: "")
+            novel.coverUri?.let { uri ->
+                readCover(uri)?.takeIf { it.size <= MAX_COVER_BYTES }?.let { bytes ->
+                    writer.name("coverData").value(Base64.encodeToString(bytes, Base64.NO_WRAP))
+                    writer.name("coverExt").value("jpg")
+                }
+            }
+            writer.name("lastChapterId").value(novel.lastChapterId ?: "")
+            writer.name("replacements").value(novel.replacements)
+            writer.name("replacementsEnabled").value(novel.replacementsEnabled)
+            writer.name("createdAt").value(novel.createdAt)
+            writer.name("updatedAt").value(novel.updatedAt)
+            writer.name("chapters").beginArray()
+            for (ch in chapters) {
+                writer.beginObject()
+                writer.name("id").value(ch.id)
+                writer.name("title").value(ch.title)
+                writer.name("content").value(ch.content)
+                writer.name("wordCount").value(ch.wordCount)
+                writer.name("read").value(ch.read)
+                writer.name("readAt")
+                if (ch.readAt != null) writer.value(ch.readAt) else writer.nullValue()
+                writer.name("scrollPosition").value(ch.scrollPosition)
+                writer.name("readingParagraphIndex").value(ch.readingParagraphIndex)
+                writer.name("createdAt").value(ch.createdAt)
+                writer.name("updatedAt").value(ch.updatedAt)
+                writer.endObject()
+            }
+            writer.endArray()
+            writer.name("progress").beginObject()
+            for (ch in chapters) {
+                if (ch.scrollPosition > 0) writer.name(ch.id).value(ch.scrollPosition)
+            }
+            writer.endObject()
+            writer.endObject()
+        }
+        writer.endArray()
+        writer.name("settings").beginObject()
+        writer.name("theme").value(settings.theme)
+        writer.name("fontSize").value(settings.fontSize)
+        writer.name("lineHeight").value(settings.lineHeight.toDouble())
+        writer.name("fontFamily").value(settings.fontFamily)
+        writer.name("maxWidth").value(settings.maxWidth)
+        writer.name("ttsRate").value(settings.ttsRate.toDouble())
+        writer.name("ttsPitch").value(settings.ttsPitch.toDouble())
+        writer.name("ttsVoice").value(settings.ttsVoice)
+        writer.name("continueReading").value(settings.continueReading)
+        writer.name("replacementsEnabled").value(settings.replacementsEnabled)
+        writer.name("splitLongParagraphs").value(settings.splitLongParagraphs)
+        writer.endObject()
+        writer.endObject()
+        writer.endObject()
+        writer.flush()
+        writer.close()
+    }
+
+    /**
+     * Reads a backup from [input] one novel at a time, calling [onNovel] for each. [saveCover]
+     * turns embedded cover bytes into a saved file address. Returns the backup's settings, if any.
+     * Throws IllegalArgumentException when the file is not a backup.
+     */
+    suspend fun readBackupStream(
+        input: InputStream,
+        saveCover: (novelId: String, bytes: ByteArray) -> String?,
+        onNovel: suspend (NovelWithChaptersBackup) -> Unit
+    ): ReaderSettings? {
+        val reader = JsonReader(InputStreamReader(input, Charsets.UTF_8).buffered())
+        var settings: ReaderSettings? = null
+        var sawNovels = false
+        try {
+            if (reader.peek() != JsonToken.BEGIN_OBJECT) throw notABackup()
+            suspend fun readData() {
+                reader.beginObject()
+                while (reader.hasNext()) {
+                    when (reader.nextName()) {
+                        "novels" -> {
+                            sawNovels = true
+                            reader.beginArray()
+                            var index = 0
+                            while (reader.hasNext()) {
+                                onNovel(readNovel(reader, index++, saveCover))
+                            }
+                            reader.endArray()
+                        }
+                        "settings" -> settings = readSettings(reader)
+                        else -> reader.skipValue()
+                    }
+                }
+                reader.endObject()
+            }
+            reader.beginObject()
+            while (reader.hasNext()) {
+                when (reader.nextName()) {
+                    "data" -> {
+                        if (reader.peek() != JsonToken.BEGIN_OBJECT) throw notABackup()
+                        readData()
+                    }
+                    "novels" -> {
+                        sawNovels = true
+                        reader.beginArray()
+                        var index = 0
+                        while (reader.hasNext()) {
+                            onNovel(readNovel(reader, index++, saveCover))
+                        }
+                        reader.endArray()
+                    }
+                    "settings" -> settings = readSettings(reader)
+                    else -> reader.skipValue()
+                }
+            }
+            reader.endObject()
+        } catch (e: java.io.EOFException) {
+            throw IllegalArgumentException("The backup file is empty or incomplete.")
+        } catch (e: android.util.MalformedJsonException) {
+            throw IllegalArgumentException("The backup file is damaged or is not an MTL Vault backup.")
+        } finally {
+            try { reader.close() } catch (_: Exception) {}
+        }
+        if (!sawNovels) throw notABackup()
+        return settings
+    }
+
+    private fun notABackup() =
+        IllegalArgumentException("This file is not a valid MTL Vault backup (no \"novels\" list found).")
+
+    private fun JsonReader.stringOrNull(): String? = when (peek()) {
+        JsonToken.NULL -> { nextNull(); null }
+        JsonToken.STRING -> nextString()
+        JsonToken.NUMBER -> nextString()
+        JsonToken.BOOLEAN -> nextBoolean().toString()
+        else -> { skipValue(); null }
+    }
+
+    private fun JsonReader.longOr(default: Long): Long = when (peek()) {
+        JsonToken.NUMBER, JsonToken.STRING -> try { nextString().toDouble().toLong() } catch (e: NumberFormatException) { default }
+        JsonToken.NULL -> { nextNull(); default }
+        else -> { skipValue(); default }
+    }
+
+    private fun JsonReader.boolOr(default: Boolean): Boolean = when (peek()) {
+        JsonToken.BOOLEAN -> nextBoolean()
+        JsonToken.NULL -> { nextNull(); default }
+        else -> { skipValue(); default }
+    }
+
+    private fun JsonReader.doubleOr(default: Double): Double = when (peek()) {
+        JsonToken.NUMBER, JsonToken.STRING -> try { nextString().toDouble() } catch (e: NumberFormatException) { default }
+        JsonToken.NULL -> { nextNull(); default }
+        else -> { skipValue(); default }
+    }
+
+    private fun readNovel(
+        reader: JsonReader,
+        index: Int,
+        saveCover: (String, ByteArray) -> String?
+    ): NovelWithChaptersBackup {
+        var id: String? = null
+        var title = "Untitled Novel"
+        var author = ""
+        var translator = ""
+        var description = ""
+        var cover: String? = null
+        var coverData: String? = null
+        var lastChapterId: String? = null
+        var replacements = ""
+        var replacementsEnabled = true
+        var createdAt = System.currentTimeMillis()
+        var updatedAt = System.currentTimeMillis()
+        var progress: Map<String, Int>? = null
+        val rawChapters = mutableListOf<ChapterEntity>()
+
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "id" -> id = reader.stringOrNull()
+                "title" -> title = reader.stringOrNull() ?: title
+                "author" -> author = reader.stringOrNull() ?: ""
+                "translator" -> translator = reader.stringOrNull() ?: ""
+                "description" -> description = reader.stringOrNull() ?: ""
+                "cover" -> cover = reader.stringOrNull()
+                "coverData" -> coverData = reader.stringOrNull()
+                "lastChapterId" -> lastChapterId = reader.stringOrNull()
+                "replacements" -> replacements = reader.stringOrNull() ?: ""
+                "replacementsEnabled" -> replacementsEnabled = reader.boolOr(true)
+                "createdAt" -> createdAt = reader.longOr(createdAt)
+                "updatedAt" -> updatedAt = reader.longOr(updatedAt)
+                "progress" -> {
+                    if (reader.peek() == JsonToken.BEGIN_OBJECT) {
+                        val map = HashMap<String, Int>()
+                        reader.beginObject()
+                        while (reader.hasNext()) {
+                            val key = reader.nextName()
+                            map[key] = reader.longOr(0).toInt()
+                        }
+                        reader.endObject()
+                        progress = map
+                    } else reader.skipValue()
+                }
+                "chapters" -> {
+                    reader.beginArray()
+                    var j = 0
+                    while (reader.hasNext()) {
+                        rawChapters.add(readChapter(reader, j++))
+                    }
+                    reader.endArray()
+                }
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+
+        val novelId = id ?: "n_${System.currentTimeMillis()}_$index"
+        var coverUri = cover?.takeIf { it.isNotBlank() }
+        if (!coverData.isNullOrBlank()) {
+            try {
+                val bytes = Base64.decode(coverData, Base64.DEFAULT)
+                saveCover(novelId, bytes)?.let { coverUri = it }
+            } catch (e: IllegalArgumentException) {
+                // A damaged cover must not stop the restore; keep whatever address was stored.
+            }
+        }
+        val novel = NovelEntity(
+            id = novelId,
+            title = title,
+            author = author,
+            translator = translator,
+            description = description,
+            coverUri = coverUri,
+            lastChapterId = lastChapterId?.takeIf { it.isNotBlank() },
+            replacements = replacements,
+            replacementsEnabled = replacementsEnabled,
+            createdAt = createdAt,
+            updatedAt = updatedAt
+        )
+        val progressMap = progress
+        val chapters = rawChapters.map { ch ->
+            ch.copy(
+                novelId = novelId,
+                scrollPosition = if (progressMap != null) (progressMap[ch.id] ?: 0) else ch.scrollPosition
+            )
+        }
+        return NovelWithChaptersBackup(novel, chapters)
+    }
+
+    private fun readChapter(reader: JsonReader, j: Int): ChapterEntity {
+        var id: String? = null
+        var title = "Chapter ${j + 1}"
+        var content = ""
+        var wordCount: Int? = null
+        var read = false
+        var readAt: Long? = null
+        var scroll = 0
+        var para = 0
+        var createdAt = System.currentTimeMillis()
+        var updatedAt = System.currentTimeMillis()
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "id" -> id = reader.stringOrNull()
+                "title" -> title = reader.stringOrNull() ?: title
+                "content" -> content = reader.stringOrNull() ?: ""
+                "wordCount" -> wordCount = reader.longOr(-1).toInt().takeIf { it >= 0 }
+                "read" -> read = reader.boolOr(false)
+                "readAt" -> readAt = if (reader.peek() == JsonToken.NULL) { reader.nextNull(); null } else reader.longOr(0)
+                "scrollPosition" -> scroll = reader.longOr(0).toInt()
+                "readingParagraphIndex" -> para = reader.longOr(0).toInt()
+                "createdAt" -> createdAt = reader.longOr(createdAt)
+                "updatedAt" -> updatedAt = reader.longOr(updatedAt)
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+        return ChapterEntity(
+            id = id ?: "c_${System.currentTimeMillis()}_$j",
+            novelId = "",
+            orderIndex = j,
+            title = title,
+            content = content,
+            wordCount = wordCount ?: ChapterSplitter.countWords(content),
+            scrollPosition = scroll,
+            readingParagraphIndex = para,
+            read = read,
+            readAt = readAt,
+            createdAt = createdAt,
+            updatedAt = updatedAt
+        )
+    }
+
+    private fun readSettings(reader: JsonReader): ReaderSettings? {
+        if (reader.peek() != JsonToken.BEGIN_OBJECT) { reader.skipValue(); return null }
+        var theme = "light"; var fontSize = 18; var lineHeight = 1.75; var fontFamily = "serif"
+        var maxWidth = 720; var ttsRate = 1.0; var ttsPitch = 1.0; var ttsVoice = ""
+        var continueReading = true; var replacementsEnabled = true; var split = "medium"
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "theme" -> theme = reader.stringOrNull() ?: theme
+                "fontSize" -> fontSize = reader.longOr(fontSize.toLong()).toInt()
+                "lineHeight" -> lineHeight = reader.doubleOr(lineHeight)
+                "fontFamily" -> fontFamily = reader.stringOrNull() ?: fontFamily
+                "maxWidth" -> maxWidth = reader.longOr(maxWidth.toLong()).toInt()
+                "ttsRate" -> ttsRate = reader.doubleOr(ttsRate)
+                "ttsPitch" -> ttsPitch = reader.doubleOr(ttsPitch)
+                "ttsVoice" -> ttsVoice = reader.stringOrNull() ?: ""
+                "continueReading" -> continueReading = reader.boolOr(true)
+                "replacementsEnabled" -> replacementsEnabled = reader.boolOr(true)
+                "splitLongParagraphs" -> split = reader.stringOrNull() ?: split
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+        return ReaderSettings(
+            theme = theme,
+            fontSize = fontSize,
+            lineHeight = lineHeight.toFloat(),
+            fontFamily = fontFamily,
+            maxWidth = maxWidth,
+            ttsRate = ttsRate.toFloat(),
+            ttsPitch = ttsPitch.toFloat(),
+            ttsVoice = ttsVoice,
+            continueReading = continueReading,
+            replacementsEnabled = replacementsEnabled,
+            splitLongParagraphs = split
+        )
     }
 }
