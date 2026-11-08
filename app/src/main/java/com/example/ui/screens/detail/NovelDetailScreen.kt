@@ -1,6 +1,15 @@
 package com.example.ui.screens.detail
 
 import android.widget.Toast
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.compose.foundation.Image
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -260,12 +269,46 @@ fun NovelDetailScreen(
                                     .background(MaterialTheme.colorScheme.primaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Book,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(40.dp)
-                                )
+                                val coverBitmap by produceState<ImageBitmap?>(initialValue = null, currentNovel.coverUri) {
+                                    val uriString = currentNovel.coverUri?.takeIf { it.isNotBlank() }
+                                    value = if (uriString == null) {
+                                        null
+                                    } else {
+                                        withContext(Dispatchers.IO) {
+                                            try {
+                                                val uri = Uri.parse(uriString)
+                                                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                                context.contentResolver.openInputStream(uri)?.use {
+                                                    BitmapFactory.decodeStream(it, null, bounds)
+                                                }
+                                                var sample = 1
+                                                while (bounds.outWidth / (sample * 2) >= 480) sample *= 2
+                                                val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                                                context.contentResolver.openInputStream(uri)?.use {
+                                                    BitmapFactory.decodeStream(it, null, opts)
+                                                }?.asImageBitmap()
+                                            } catch (e: Exception) {
+                                                null
+                                            }
+                                        }
+                                    }
+                                }
+                                val loadedCover = coverBitmap
+                                if (loadedCover != null) {
+                                    Image(
+                                        bitmap = loadedCover,
+                                        contentDescription = currentNovel.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Book,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(40.dp)
+                                    )
+                                }
                             }
 
                             Spacer(modifier = Modifier.width(14.dp))
