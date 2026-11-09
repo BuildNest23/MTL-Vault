@@ -329,6 +329,104 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
+                        // Phone voice: which speech engine to use (e.g. ToBe SAID) and which of its voices
+                        Text(
+                            text = "Phone voice engine",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Used when Edge voices are off or offline. Pick an installed speech engine such as ToBe SAID, then one of its voices.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        var engines by remember { mutableStateOf(viewModel.phoneEngines()) }
+                        var engineMenuOpen by remember { mutableStateOf(false) }
+                        val engineLabel = if (settings.phoneEngine.isBlank()) {
+                            "System default"
+                        } else {
+                            engines.find { it.packageName == settings.phoneEngine }?.label ?: settings.phoneEngine
+                        }
+                        Box {
+                            OutlinedButton(
+                                onClick = {
+                                    engines = viewModel.phoneEngines()
+                                    engineMenuOpen = true
+                                },
+                                modifier = Modifier.fillMaxWidth().testTag("settings_phone_engine_button")
+                            ) {
+                                Text("Engine: $engineLabel")
+                            }
+                            DropdownMenu(
+                                expanded = engineMenuOpen,
+                                onDismissRequest = { engineMenuOpen = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("System default") },
+                                    onClick = {
+                                        viewModel.updatePhoneEngine("")
+                                        engineMenuOpen = false
+                                    }
+                                )
+                                engines.forEach { engine ->
+                                    DropdownMenuItem(
+                                        text = { Text(engine.label) },
+                                        onClick = {
+                                            viewModel.updatePhoneEngine(engine.packageName)
+                                            engineMenuOpen = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        var phoneVoices by remember { mutableStateOf(viewModel.phoneVoices()) }
+                        var phoneVoiceMenuOpen by remember { mutableStateOf(false) }
+                        val phoneVoiceLabel = settings.ttsVoice.ifBlank { "Engine default" }
+                        Box {
+                            OutlinedButton(
+                                onClick = {
+                                    phoneVoices = viewModel.phoneVoices()
+                                    phoneVoiceMenuOpen = true
+                                },
+                                modifier = Modifier.fillMaxWidth().testTag("settings_phone_voice_button")
+                            ) {
+                                Text("Voice: $phoneVoiceLabel")
+                            }
+                            DropdownMenu(
+                                expanded = phoneVoiceMenuOpen,
+                                onDismissRequest = { phoneVoiceMenuOpen = false }
+                            ) {
+                                if (phoneVoices.isEmpty()) {
+                                    DropdownMenuItem(
+                                        text = { Text("No voices yet. Wait a moment and try again.") },
+                                        onClick = { phoneVoiceMenuOpen = false }
+                                    )
+                                }
+                                phoneVoices.forEach { voice ->
+                                    DropdownMenuItem(
+                                        text = { Text(voice.label) },
+                                        onClick = {
+                                            viewModel.updateTtsVoice(voice.name)
+                                            phoneVoiceMenuOpen = false
+                                            viewModel.previewPhoneVoice()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedButton(
+                            onClick = { viewModel.previewPhoneVoice() },
+                            modifier = Modifier.fillMaxWidth().testTag("settings_phone_voice_sample")
+                        ) {
+                            Text("Play a sample")
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween

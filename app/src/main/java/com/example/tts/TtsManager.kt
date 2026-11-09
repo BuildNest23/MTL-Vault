@@ -184,6 +184,16 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     private var speechPitch = 1.0f
     private var selectedVoiceName: String? = null
 
+    // Which speech engine the phone voice uses (package name, "" = the system default).
+    // [requestedEngine] is what the settings ask for; [activeEngine] is what actually started
+    // (it falls back to "" if the chosen engine is missing or fails to start).
+    @Volatile
+    private var requestedEngine = ""
+    @Volatile
+    private var activeEngine = ""
+    @Volatile
+    private var reinitRequested = false
+
     // Edge neural voices (online). When switched off, the phone's own TextToSpeech engine is used.
     @Volatile
     private var useEdge = false
@@ -251,7 +261,11 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         isInitialized = false
 
         try {
-            tts = TextToSpeech(context.applicationContext, this)
+            tts = if (activeEngine.isBlank()) {
+                TextToSpeech(context.applicationContext, this)
+            } else {
+                TextToSpeech(context.applicationContext, this, activeEngine)
+            }
         } catch (e: Exception) {
             isInitializing = false
             AppLogger.e("TtsManager", "Failed to create TextToSpeech instance", e)
@@ -266,6 +280,18 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         isInitializing = false
+        if (reinitRequested) {
+            // The engine choice changed while this one was starting; start again with the new choice
+            reinitRequested = false
+            initEngine()
+            return
+        }
+        if (status != TextToSpeech.SUCCESS && activeEngine.isNotBlank()) {
+            AppLogger.w("TtsManager", "Speech engine $activeEngine failed to start (code $status), using the system default")
+            activeEngine = ""
+            initEngine()
+            return
+        }
         val defaultEng = tts?.defaultEngine ?: "unknown"
         AppLogger.i("TtsManager", "onInit received: status=$status, defaultEngine=$defaultEng")
         if (status == TextToSpeech.SUCCESS) {
@@ -493,11 +519,13 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 AppLogger.e("TtsManager", "onError deprecated: utteranceId=$utteranceId")
+                if (utteranceId != null && utteranceId.startsWith("preview_")) return
                 if (utteranceId != null && utteranceId.startsWith("ch_") && utteranceId != activeUtteranceId) return
                 handleUtteranceError("Synthesis error on $utteranceId", TextToSpeech.ERROR)
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
+                if (utteranceId != null && utteranceId.startsWith("preview_")) return
                 // A sentence that was already replaced (double tap, seek) can report an error late.
                 // Without this check it made the reader skip the paragraph that was just started.
                 if (utteranceId != null && utteranceId.startsWith("ch_") && utteranceId != activeUtteranceId) {
@@ -1291,6 +1319,81 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     fun setSpeechPitch(pitch: Float) {
         speechPitch = pitch
         tts?.setPitch(pitch)
+    }
+
+    /** A speech engine installed on the phone: its package name and display name. */
+    data class PhoneEngineInfo(val packageName: String, val label: String)
+
+    /** A voice offered by the current phone speech engine. */
+    data class PhoneVoiceInfo(val name: String, val label: String)
+
+    /** Picks the speech engine for the phone voice ("" = the system default). */
+    fun setPhoneEngine(packageName: String) {
+        if (packageName == requestedEngine) return
+        requestedEngine = packageName
+        activeEngine = packageName
+        selectedVoiceName = null
+        mainScope.launch {
+            val wasActive = isSpeakingActive
+            try {
+                tts?.stop()
+            } catch (e: Exception) {
+                AppLogger.w("TtsManager", "Error stopping TTS while switching engine: ${e.localizedMessage}")
+            }
+            if (isInitializing) {
+                reinitRequested = true
+            } else {
+                initEngine {
+                    if (wasActive && !useEdge && isSpeakingActive) {
+                        val resumeOffset = if (resumeChunkIndex == currentChunkIndex) resumeCharOffset else 0
+                        prepareAndSpeakChunk(currentChunkIndex, resumeOffset)
+                    }
+                }
+            }
+        }
+    }
+
+    /** The speech engines installed on the phone (empty until the current engine has started). */
+    fun getPhoneEngines(): List<PhoneEngineInfo> {
+        return try {
+            tts?.engines?.map { PhoneEngineInfo(it.name, it.label ?: it.name) } ?: emptyList()
+        } catch (e: Exception) {
+            AppLogger.w("TtsManager", "Could not list engines: ${e.localizedMessage}")
+            emptyList()
+        }
+    }
+
+    /** The voices of the current phone speech engine, English first. */
+    fun getPhoneVoices(): List<PhoneVoiceInfo> {
+        return try {
+            val voices = tts?.voices ?: return emptyList()
+            voices
+                .sortedWith(
+                    compareBy<android.speech.tts.Voice>({ !it.locale.language.equals("en", ignoreCase = true) }, { it.locale.toString() }, { it.name })
+                )
+                .map { PhoneVoiceInfo(it.name, it.name + "  (" + it.locale.displayName + ")") }
+        } catch (e: Exception) {
+            // Some engines throw when asked for their voices
+            AppLogger.w("TtsManager", "Could not list voices: ${e.localizedMessage}")
+            emptyList()
+        }
+    }
+
+    /** Name of the voice the phone engine is using right now, or null. */
+    fun getCurrentPhoneVoiceName(): String? {
+        return try { tts?.voice?.name } catch (e: Exception) { null }
+    }
+
+    /** Speaks a short sample with the phone engine and current voice. Does nothing while reading. */
+    fun previewPhoneVoice(text: String) {
+        if (isSpeakingActive) return
+        val engine = tts ?: return
+        if (!isInitialized) return
+        try {
+            engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "preview_" + System.currentTimeMillis())
+        } catch (e: Exception) {
+            AppLogger.w("TtsManager", "Preview failed: ${e.localizedMessage}")
+        }
     }
 
     fun setVoice(voiceName: String) {

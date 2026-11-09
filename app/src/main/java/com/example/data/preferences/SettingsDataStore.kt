@@ -30,6 +30,7 @@ class SettingsDataStore(private val context: Context) {
         val TTS_PITCH = floatPreferencesKey("tts_pitch")
         val TTS_VOICE = stringPreferencesKey("tts_voice")
         val TTS_ENGINE = stringPreferencesKey("tts_engine")
+        val PHONE_ENGINE = stringPreferencesKey("phone_engine")
         val EDGE_VOICE = stringPreferencesKey("edge_voice")
         val EDGE_WIFI_ONLY = booleanPreferencesKey("edge_wifi_only")
         val CONTINUE_READING = booleanPreferencesKey("continue_reading")
@@ -59,6 +60,7 @@ class SettingsDataStore(private val context: Context) {
                 ttsPitch = preferences[PreferencesKeys.TTS_PITCH] ?: 1.0f,
                 ttsVoice = preferences[PreferencesKeys.TTS_VOICE] ?: "",
                 ttsEngine = preferences[PreferencesKeys.TTS_ENGINE] ?: "",
+                phoneEngine = preferences[PreferencesKeys.PHONE_ENGINE] ?: "",
                 edgeVoice = preferences[PreferencesKeys.EDGE_VOICE] ?: "",
                 edgeWifiOnly = preferences[PreferencesKeys.EDGE_WIFI_ONLY] ?: false,
                 continueReading = preferences[PreferencesKeys.CONTINUE_READING] ?: true,
@@ -124,6 +126,14 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[PreferencesKeys.TTS_ENGINE] = engine }
     }
 
+    suspend fun updatePhoneEngine(packageName: String) {
+        context.dataStore.edit {
+            it[PreferencesKeys.PHONE_ENGINE] = packageName
+            // A voice name belongs to one engine, so forget the old one
+            it[PreferencesKeys.TTS_VOICE] = ""
+        }
+    }
+
     suspend fun updateEdgeVoice(voice: String) {
         context.dataStore.edit { it[PreferencesKeys.EDGE_VOICE] = voice }
     }
@@ -160,6 +170,7 @@ class SettingsDataStore(private val context: Context) {
             prefs[PreferencesKeys.TTS_PITCH] = settings.ttsPitch
             prefs[PreferencesKeys.TTS_VOICE] = settings.ttsVoice
             prefs[PreferencesKeys.TTS_ENGINE] = settings.ttsEngine
+            prefs[PreferencesKeys.PHONE_ENGINE] = settings.phoneEngine
             prefs[PreferencesKeys.EDGE_VOICE] = settings.edgeVoice
             prefs[PreferencesKeys.EDGE_WIFI_ONLY] = settings.edgeWifiOnly
             prefs[PreferencesKeys.CONTINUE_READING] = settings.continueReading

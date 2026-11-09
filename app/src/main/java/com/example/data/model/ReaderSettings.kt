@@ -23,6 +23,7 @@ data class ReaderSettings(
     val ttsPitch: Float = 1.0f,
     val ttsVoice: String = "",
     val ttsEngine: String = "", // "" = phone voice, "edge" = Edge neural voices (online)
+    val phoneEngine: String = "", // package of the phone speech engine to use ("" = the system default)
     val edgeVoice: String = "",
     val edgeWifiOnly: Boolean = false, // download the whole chapter ahead only on Wi-Fi / unmetered networks
     val continueReading: Boolean = true,

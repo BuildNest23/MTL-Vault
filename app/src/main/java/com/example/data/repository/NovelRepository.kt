@@ -409,7 +409,10 @@ class NovelRepository(
                 restored.copy(
                     ttsEngine = if (restored.ttsEngine.isBlank()) current.ttsEngine else restored.ttsEngine,
                     edgeVoice = if (restored.edgeVoice.isBlank()) current.edgeVoice else restored.edgeVoice,
-                    detailedLogging = current.detailedLogging
+                    detailedLogging = current.detailedLogging,
+                    // Engines and their voices are specific to this phone
+                    phoneEngine = current.phoneEngine,
+                    ttsVoice = current.ttsVoice
                 )
             )
         }

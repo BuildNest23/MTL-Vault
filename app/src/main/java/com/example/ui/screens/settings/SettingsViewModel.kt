@@ -92,6 +92,23 @@ class SettingsViewModel(
         }
     }
 
+    /** Picks the phone speech engine (package name, "" = system default). Clears the old voice. */
+    fun updatePhoneEngine(packageName: String) {
+        viewModelScope.launch {
+            settingsDataStore.updatePhoneEngine(packageName)
+        }
+    }
+
+    fun phoneEngines(): List<TtsManager.PhoneEngineInfo> = ttsManager?.getPhoneEngines() ?: emptyList()
+
+    fun phoneVoices(): List<TtsManager.PhoneVoiceInfo> = ttsManager?.getPhoneVoices() ?: emptyList()
+
+    fun currentPhoneVoiceName(): String? = ttsManager?.getCurrentPhoneVoiceName()
+
+    fun previewPhoneVoice() {
+        ttsManager?.previewPhoneVoice("The quick brown fox jumps over the lazy dog. This is how I sound.")
+    }
+
     fun updateTtsVoice(voice: String) {
         ttsManager?.setVoice(voice)
         viewModelScope.launch {
