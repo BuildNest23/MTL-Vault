@@ -140,6 +140,14 @@ class NovelRepository(
         names
     }
 
+    /** Characters (key -> name as written) and how many tagged lines each has in the whole novel. */
+    suspend fun findSpeakers(novelId: String): Pair<Map<String, String>, Map<String, Int>> = withContext(Dispatchers.IO) {
+        val names = LinkedHashMap<String, String>()
+        val counts = HashMap<String, Int>()
+        chapterDao.getTaggedChapterContents(novelId).forEach { SpeakerTags.findNames(it, names, counts) }
+        names to counts
+    }
+
     /** Saves an edited title and text without touching read state or reading position. */
     suspend fun updateChapterText(chapter: ChapterEntity, title: String, content: String) = withContext(Dispatchers.IO) {
         ReplacementEngine.invalidateChapter(chapter.id)

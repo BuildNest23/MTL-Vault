@@ -17,7 +17,11 @@ data class VoiceRow(
     val key: String,
     val name: String,
     /** Voice name chosen for this character; blank = same as the narrator. */
-    val voice: String
+    val voice: String,
+    /** Tagged lines this character has in the novel. */
+    val lines: Int = 0,
+    /** "m", "f" or "" (not marked). */
+    val gender: String = ""
 )
 
 data class VoicesUiState(
@@ -25,6 +29,8 @@ data class VoicesUiState(
     val novelTitle: String = "",
     /** Voice for narration; blank = the normal voice from Settings. */
     val narratorVoice: String = "",
+    val defaultMale: String = "",
+    val defaultFemale: String = "",
     val rows: List<VoiceRow> = emptyList(),
     val voices: List<TtsManager.PhoneVoiceInfo> = emptyList()
 )
@@ -50,7 +56,7 @@ class VoicesViewModel(
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true)
             val title = repository.getNovelByIdSync(novelId)?.title ?: ""
-            val found = repository.findSpeakerNames(novelId)
+            val (found, counts) = repository.findSpeakers(novelId)
             cast = store.load(novelId)
 
             // Characters found in the chapters first, then any that have a saved voice but are no longer found
@@ -59,11 +65,15 @@ class VoicesViewModel(
             cast.voices.forEach { (key, voice) ->
                 if (voice.isNotBlank() && key !in names) names[key] = cast.names[key] ?: key
             }
-            val rows = names.map { (key, name) -> VoiceRow(key, name, cast.voices[key].orEmpty()) }
+            val rows = names.map { (key, name) ->
+                VoiceRow(key, name, cast.voices[key].orEmpty(), counts[key] ?: 0, cast.genders[key].orEmpty())
+            }.sortedWith(compareByDescending<VoiceRow> { it.lines }.thenBy { it.name.lowercase() })
             _state.value = VoicesUiState(
                 loading = false,
                 novelTitle = title,
                 narratorVoice = cast.narrator,
+                defaultMale = cast.defaultMale,
+                defaultFemale = cast.defaultFemale,
                 rows = rows,
                 voices = ttsManager.getPhoneVoices()
             )
@@ -85,6 +95,29 @@ class VoicesViewModel(
         preview(voiceName)
     }
 
+    fun setDefaultVoice(male: Boolean, voiceName: String) {
+        cast = if (male) cast.copy(defaultMale = voiceName) else cast.copy(defaultFemale = voiceName)
+        save()
+        _state.value = if (male) _state.value.copy(defaultMale = voiceName) else _state.value.copy(defaultFemale = voiceName)
+        preview(voiceName.ifBlank { cast.narrator })
+    }
+
+    /** Marks a character male or female ("" clears it). Tapping the same mark again clears it. */
+    fun setGender(key: String, gender: String) {
+        val current = cast.genders[key].orEmpty()
+        val next = if (current == gender) "" else gender
+        val genders = LinkedHashMap(cast.genders)
+        if (next.isBlank()) genders.remove(key) else genders[key] = next
+        val names = LinkedHashMap(cast.names)
+        _state.value.rows.forEach { names[it.key] = it.name }
+        cast = cast.copy(genders = genders, names = names)
+        save()
+        _state.value = _state.value.copy(
+            rows = _state.value.rows.map { if (it.key == key) it.copy(gender = next) else it }
+        )
+        if (_state.value.rows.firstOrNull { it.key == key }?.voice.isNullOrBlank()) preview(cast.voiceFor(key))
+    }
+
     fun setCharacterVoice(key: String, voiceName: String) {
         val voices = LinkedHashMap(cast.voices)
         if (voiceName.isBlank()) voices.remove(key) else voices[key] = voiceName
@@ -95,7 +128,7 @@ class VoicesViewModel(
         _state.value = _state.value.copy(
             rows = _state.value.rows.map { if (it.key == key) it.copy(voice = voiceName) else it }
         )
-        preview(voiceName.ifBlank { cast.narrator })
+        preview(cast.voiceFor(key))
     }
 
     /** Speaks a short sample with the given voice (blank = the narrator / normal voice). */

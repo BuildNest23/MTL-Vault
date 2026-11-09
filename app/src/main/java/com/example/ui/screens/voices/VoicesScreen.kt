@@ -3,6 +3,7 @@ package com.example.ui.screens.voices
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +15,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -72,7 +75,8 @@ fun VoicesScreen(
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "A line that starts with @Name: is spoken by that character, for example @Robin: \"Hello.\" " +
-                        "Pick a voice for each name below. Characters without a voice use the narrator's voice. " +
+                        "Mark each name Male or Female and set the two default voices, or pick a voice for a name yourself. " +
+                        "Characters with neither use the narrator's voice. " +
                         "These voices apply to the phone voice (for example ToBe SAID), not to Edge voices.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -88,6 +92,30 @@ fun VoicesScreen(
                     voices = state.voices,
                     onPick = { viewModel.setNarratorVoice(it) },
                     tag = "voices_narrator"
+                )
+            }
+
+            item {
+                VoiceCard(
+                    title = "Default male voice",
+                    subtitle = "For characters marked Male that have no voice of their own",
+                    voice = state.defaultMale,
+                    blankLabel = "Same as narrator",
+                    voices = state.voices,
+                    onPick = { viewModel.setDefaultVoice(true, it) },
+                    tag = "voices_default_male"
+                )
+            }
+
+            item {
+                VoiceCard(
+                    title = "Default female voice",
+                    subtitle = "For characters marked Female that have no voice of their own",
+                    voice = state.defaultFemale,
+                    blankLabel = "Same as narrator",
+                    voices = state.voices,
+                    onPick = { viewModel.setDefaultVoice(false, it) },
+                    tag = "voices_default_female"
                 )
             }
 
@@ -109,7 +137,7 @@ fun VoicesScreen(
             } else {
                 item {
                     Text(
-                        text = "Characters (${state.rows.size})",
+                        text = "Characters (${state.rows.size}), most lines first",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(top = 4.dp)
@@ -118,12 +146,18 @@ fun VoicesScreen(
                 items(state.rows, key = { it.key }) { row ->
                     VoiceCard(
                         title = "@" + row.name,
-                        subtitle = null,
+                        subtitle = if (row.lines == 1) "1 line" else "${row.lines} lines",
                         voice = row.voice,
-                        blankLabel = "Same as narrator",
+                        blankLabel = when (row.gender) {
+                            "m" -> "Default male voice"
+                            "f" -> "Default female voice"
+                            else -> "Same as narrator"
+                        },
                         voices = state.voices,
                         onPick = { viewModel.setCharacterVoice(row.key, it) },
-                        tag = "voices_row_" + row.key
+                        tag = "voices_row_" + row.key,
+                        gender = row.gender,
+                        onGender = { viewModel.setGender(row.key, it) }
                     )
                 }
             }
@@ -133,6 +167,7 @@ fun VoicesScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VoiceCard(
     title: String,
@@ -141,7 +176,9 @@ private fun VoiceCard(
     blankLabel: String,
     voices: List<TtsManager.PhoneVoiceInfo>,
     onPick: (String) -> Unit,
-    tag: String
+    tag: String,
+    gender: String? = null,
+    onGender: (String) -> Unit = {}
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val label = if (voice.isBlank()) blankLabel else (voices.find { it.name == voice }?.label ?: voice)
@@ -160,6 +197,23 @@ private fun VoiceCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            if (gender != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = gender == "m",
+                        onClick = { onGender("m") },
+                        label = { Text("Male") },
+                        modifier = Modifier.testTag("$tag-male")
+                    )
+                    FilterChip(
+                        selected = gender == "f",
+                        onClick = { onGender("f") },
+                        label = { Text("Female") },
+                        modifier = Modifier.testTag("$tag-female")
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(8.dp))
             Box {

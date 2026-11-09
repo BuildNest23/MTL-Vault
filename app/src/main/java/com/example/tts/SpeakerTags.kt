@@ -64,7 +64,7 @@ object SpeakerTags {
     }
 
     /** All character names used in a text, first spelling kept, keyed by normalised name. */
-    fun findNames(text: String, into: MutableMap<String, String>) {
+    fun findNames(text: String, into: MutableMap<String, String>, counts: MutableMap<String, Int>? = null) {
         if (!text.contains('@')) return
         for (line in text.lineSequence()) {
             val t = line.trimStart()
@@ -72,7 +72,9 @@ object SpeakerTags {
             val m = TAG.find(t) ?: continue
             val display = m.groupValues[1].trim().replace(Regex("\\s+"), " ")
             val key = normalizeKey(display)
-            if (key !in NARRATION_NAMES && key !in into) into[key] = display
+            if (key in NARRATION_NAMES) continue
+            if (key !in into) into[key] = display
+            if (counts != null) counts[key] = (counts[key] ?: 0) + 1
         }
     }
 }
@@ -84,13 +86,34 @@ data class VoiceCast(
     /** Character key -> voice name (blank = same as narrator). */
     val voices: Map<String, String> = emptyMap(),
     /** Character key -> name as written, for display. */
-    val names: Map<String, String> = emptyMap()
+    val names: Map<String, String> = emptyMap(),
+    /** Voice for characters marked male that have no voice of their own; blank = narrator. */
+    val defaultMale: String = "",
+    /** Voice for characters marked female that have no voice of their own; blank = narrator. */
+    val defaultFemale: String = "",
+    /** Character key -> "m" or "f" (missing = not marked). */
+    val genders: Map<String, String> = emptyMap()
 ) {
+    /** The voice a character really gets: their own, else the default for their gender, else the narrator's ("" = narrator). */
+    fun voiceFor(key: String): String {
+        val own = voices[key].orEmpty()
+        if (own.isNotBlank()) return own
+        val byGender = when (genders[key]) {
+            "m" -> defaultMale
+            "f" -> defaultFemale
+            else -> ""
+        }
+        return byGender.ifBlank { narrator }
+    }
+
     fun toJson(): String {
         val o = JSONObject()
         o.put("narrator", narrator)
         o.put("voices", JSONObject(voices))
         o.put("names", JSONObject(names))
+        o.put("defaultMale", defaultMale)
+        o.put("defaultFemale", defaultFemale)
+        o.put("genders", JSONObject(genders))
         return o.toString()
     }
 
@@ -105,7 +128,10 @@ data class VoiceCast(
                     for (k in m.keys()) out[k] = m.optString(k, "")
                     return out
                 }
-                VoiceCast(o.optString("narrator", ""), map("voices"), map("names"))
+                VoiceCast(
+                    o.optString("narrator", ""), map("voices"), map("names"),
+                    o.optString("defaultMale", ""), o.optString("defaultFemale", ""), map("genders")
+                )
             } catch (e: Exception) {
                 VoiceCast()
             }

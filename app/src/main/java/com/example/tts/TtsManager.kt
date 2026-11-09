@@ -1366,7 +1366,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         val cast = currentCast
         val speaker = chunkSpeakers.getOrNull(chunkIndex)
         val base = cast.narrator.ifBlank { selectedVoiceName ?: defaultVoiceName ?: "" }
-        val wanted = if (speaker != null) cast.voices[speaker].orEmpty().ifBlank { base } else base
+        val wanted = if (speaker != null) cast.voiceFor(speaker).ifBlank { base } else base
         if (wanted.isBlank() || wanted == appliedVoiceName) return
         try {
             val voice = findVoice(engine, wanted)
