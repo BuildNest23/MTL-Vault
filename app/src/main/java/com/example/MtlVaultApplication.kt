@@ -33,10 +33,10 @@ class MtlVaultApplication : Application() {
         private set
 
     lateinit var ttsManager: TtsManager
+        private set
 
     /** Which voice each character of each novel uses. */
     val voiceCastStore: com.example.tts.VoiceCastStore by lazy { com.example.tts.VoiceCastStore(this) }
-        private set
 
     lateinit var audioRepository: AudioRepository
         private set
