@@ -104,16 +104,8 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[PreferencesKeys.FONT_SIZE] = size }
     }
 
-    suspend fun updateLineHeight(lineHeight: Float) {
-        context.dataStore.edit { it[PreferencesKeys.LINE_HEIGHT] = lineHeight }
-    }
-
     suspend fun updateFontFamily(fontFamily: String) {
         context.dataStore.edit { it[PreferencesKeys.FONT_FAMILY] = fontFamily }
-    }
-
-    suspend fun updateMaxWidth(width: Int) {
-        context.dataStore.edit { it[PreferencesKeys.MAX_WIDTH] = width }
     }
 
     suspend fun updateTtsRate(rate: Float) {
@@ -151,10 +143,6 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun updateDetailedLogging(enabled: Boolean) {
         context.dataStore.edit { it[PreferencesKeys.DETAILED_LOGGING] = enabled }
-    }
-
-    suspend fun updateSplitLongParagraphs(mode: String) {
-        context.dataStore.edit { it[PreferencesKeys.SPLIT_LONG_PARAGRAPHS] = mode.lowercase() }
     }
 
     suspend fun updateHideReadChapters(hide: Boolean) {

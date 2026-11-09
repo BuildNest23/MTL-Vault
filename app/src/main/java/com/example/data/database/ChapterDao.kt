@@ -21,9 +21,6 @@ interface ChapterDao {
     fun getChapterSummaries(novelId: String): Flow<List<ChapterSummary>>
 
     @Query("SELECT * FROM chapters WHERE novelId = :novelId ORDER BY orderIndex ASC")
-    fun getChaptersForNovel(novelId: String): Flow<List<ChapterEntity>>
-
-    @Query("SELECT * FROM chapters WHERE novelId = :novelId ORDER BY orderIndex ASC")
     suspend fun getChaptersForNovelSync(novelId: String): List<ChapterEntity>
 
     @Query("SELECT * FROM chapters WHERE id = :id LIMIT 1")
@@ -104,12 +101,4 @@ interface ChapterDao {
     @Query("SELECT COALESCE(SUM(wordCount), 0) FROM chapters")
     fun getTotalWordCount(): Flow<Long>
 
-    @Query("SELECT COUNT(*) FROM chapters WHERE novelId = :novelId")
-    suspend fun getChapterCountForNovel(novelId: String): Int
-
-    @Query("SELECT COUNT(*) FROM chapters WHERE novelId = :novelId AND read = 1")
-    suspend fun getReadChapterCountForNovel(novelId: String): Int
-
-    @Query("SELECT COALESCE(SUM(wordCount), 0) FROM chapters WHERE novelId = :novelId")
-    suspend fun getWordCountForNovel(novelId: String): Long
 }

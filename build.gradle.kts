@@ -4,7 +4,6 @@ plugins {
   alias(libs.plugins.kotlin.compose) apply false
   alias(libs.plugins.google.devtools.ksp) apply false
   alias(libs.plugins.secrets) apply false
-  alias(libs.plugins.google.services) apply false
 }
 
 // Automatically restore debug.keystore from debug.keystore.base64 if missing

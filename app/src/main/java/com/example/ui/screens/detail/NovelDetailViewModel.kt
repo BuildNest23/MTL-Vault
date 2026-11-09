@@ -132,21 +132,6 @@ class NovelDetailViewModel(
         }
     }
 
-    fun updateNovelInfo(title: String, author: String, translator: String, description: String) {
-        viewModelScope.launch {
-            val current = novel.value ?: return@launch
-            repository.updateNovel(
-                current.copy(
-                    title = title.trim().ifBlank { "Untitled" },
-                    author = author.trim(),
-                    translator = translator.trim(),
-                    description = description.trim()
-                )
-            )
-            _events.emit(DetailEvent.ShowToast("Novel updated."))
-        }
-    }
-
     /**
      * Saves everything from the Edit novel window: title, author, translator, description and cover.
      *

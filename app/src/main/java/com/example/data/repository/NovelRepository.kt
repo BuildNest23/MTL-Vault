@@ -300,35 +300,6 @@ class NovelRepository(
         result
     }
 
-    suspend fun exportChapterAsText(novelId: String, chapterId: String): String = withContext(Dispatchers.Default) {
-        val chapter = chapterDao.getChapterByIdSync(chapterId) ?: return@withContext ""
-        val content = getRenderedChapterContent(novelId, chapter)
-        "${chapter.title}\n\n$content"
-    }
-
-    suspend fun exportNovelAsText(novelId: String): String = withContext(Dispatchers.Default) {
-        val novel = novelDao.getNovelByIdSync(novelId) ?: return@withContext ""
-        val chapters = chapterDao.getChaptersForNovelSync(novelId)
-        val sb = StringBuilder()
-        sb.append(novel.title).append("\n")
-        if (novel.author.isNotBlank()) sb.append("by ").append(novel.author).append("\n")
-        if (novel.translator.isNotBlank()) sb.append("translated by ").append(novel.translator).append("\n")
-        sb.append("\n\n")
-
-        val settings = settingsDataStore.settingsFlow.first()
-        val rules = if (novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()) {
-            ReplacementEngine.parseRules(novel.replacements)
-        } else {
-            emptyList()
-        }
-
-        for (ch in chapters) {
-            val content = renderForExport(ch.content, rules)
-            sb.append(ch.title).append("\n\n").append(content).append("\n\n\n")
-        }
-        sb.toString()
-    }
-
     /** Same normalisation the reader uses, then the replacement rules (if any). */
     private fun renderForExport(raw: String, rules: List<com.example.replacement.ReplacementRule>): String {
         val normalized = ReplacementEngine.normalizeText(raw)
@@ -351,26 +322,6 @@ class NovelRepository(
             emptyList()
         }
         rawChapters.map { ch -> ch.copy(content = renderForExport(ch.content, rules)) }
-    }
-
-    suspend fun exportChaptersAsText(novelId: String, chapterIds: List<String>): String = withContext(Dispatchers.Default) {
-        val novel = novelDao.getNovelByIdSync(novelId) ?: return@withContext ""
-        val chapters = chapterIds.chunked(900).flatMap { chunk ->
-            chapterDao.getChaptersByIdsSync(chunk)
-        }.sortedBy { it.orderIndex }
-        val settings = settingsDataStore.settingsFlow.first()
-        val rules = if (novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()) {
-            ReplacementEngine.parseRules(novel.replacements)
-        } else {
-            emptyList()
-        }
-
-        val sb = StringBuilder()
-        for (ch in chapters) {
-            val content = renderForExport(ch.content, rules)
-            sb.append(ch.title).append("\n\n").append(content).append("\n\n\n")
-        }
-        sb.toString()
     }
 
     suspend fun getNextDefaultChapterTitle(novelId: String): String = withContext(Dispatchers.IO) {

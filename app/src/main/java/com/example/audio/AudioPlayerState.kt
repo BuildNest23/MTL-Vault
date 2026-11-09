@@ -59,16 +59,9 @@ data class AudioPlayerUiState(
     val hasBook: Boolean get() = bookId != null
     val isPlaying: Boolean get() = status == PlaybackStatus.PLAYING
 
-    val hasPreviousChapter: Boolean get() = chapterIndex > 0
-    val hasNextChapter: Boolean get() = chapterIndex >= 0 && chapterIndex < chapterCount - 1
-
     /** Progress through the whole book, from 0.0 to 1.0. */
     val bookProgress: Float
         get() = if (bookDurationMs > 0L) (bookPositionMs.toFloat() / bookDurationMs).coerceIn(0f, 1f) else 0f
-
-    /** Progress through the current chapter, from 0.0 to 1.0. */
-    val chapterProgress: Float
-        get() = if (chapterDurationMs > 0L) (chapterElapsedMs.toFloat() / chapterDurationMs).coerceIn(0f, 1f) else 0f
 
     val chapterRemainingMs: Long get() = (chapterDurationMs - chapterElapsedMs).coerceAtLeast(0L)
     val bookRemainingMs: Long get() = (bookDurationMs - bookPositionMs).coerceAtLeast(0L)

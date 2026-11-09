@@ -1306,10 +1306,6 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
-    fun getAvailableVoices(): List<Voice> {
-        return tts?.voices?.toList() ?: emptyList()
-    }
-
     fun sanitizeSpeechText(raw: String): String {
         var s = raw
         if (s.isEmpty()) return ""

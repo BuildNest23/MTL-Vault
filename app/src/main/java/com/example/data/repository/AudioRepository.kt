@@ -298,38 +298,6 @@ class AudioRepository(
             return before + within
         }
 
-        /**
-         * The reverse of [progressMsFor]: which file and how far into it a book-wide position is.
-         * Positions past the end land at the end of the last file.
-         */
-        fun locate(files: List<AudioFileEntity>, bookPositionMs: Long): Pair<Int, Long> {
-            if (files.isEmpty()) return 0 to 0L
-            var remaining = bookPositionMs.coerceAtLeast(0L)
-            val ordered = files.sortedBy { it.orderIndex }
-            for (file in ordered) {
-                if (remaining < file.durationMs || file === ordered.last()) {
-                    val position = if (file.durationMs > 0L) remaining.coerceAtMost(file.durationMs) else remaining
-                    return file.orderIndex to position
-                }
-                remaining -= file.durationMs
-            }
-            val last = ordered.last()
-            return last.orderIndex to last.durationMs
-        }
-
-        /**
-         * Which chapter a position inside a file belongs to. Returns the index in [chapters],
-         * or -1 if nothing fits (for example an empty list).
-         */
-        fun findChapterIndex(chapters: List<AudioChapterEntity>, fileId: String, positionMs: Long): Int {
-            val exact = chapters.indexOfFirst {
-                it.fileId == fileId && positionMs >= it.startMs && positionMs < it.endMs
-            }
-            if (exact >= 0) return exact
-            // Past the end of the last chapter of the file, or a chapter with unknown length.
-            return chapters.indexOfLast { it.fileId == fileId && it.startMs <= positionMs }
-        }
-
         /** One chapter per file, named after the file. Used when a book arrives with no chapters. */
         fun defaultChaptersForFiles(bookId: String, files: List<AudioFileEntity>): List<AudioChapterEntity> =
             files.sortedBy { it.orderIndex }.mapIndexed { index, file ->

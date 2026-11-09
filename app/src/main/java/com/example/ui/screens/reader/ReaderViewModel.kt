@@ -1,7 +1,5 @@
 package com.example.ui.screens.reader
 
-import android.content.Context
-import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.entities.ChapterEntity
@@ -359,15 +357,6 @@ class ReaderViewModel(
         ttsManager.stop()
     }
 
-    fun playFromParagraph(paragraphIndex: Int) {
-        val chapter = _currentChapter.value ?: return
-        if (ttsManager.isPlayingChapter(novelId, chapter.id)) {
-            ttsManager.seekToChunk(paragraphIndex)
-        } else {
-            playCurrentChapterTts(startFromChunkIndex = paragraphIndex)
-        }
-    }
-
     fun playFromSentence(paragraphIndex: Int, startCharOffset: Int) {
         val chapter = _currentChapter.value ?: return
         viewModelScope.launch {
@@ -527,22 +516,6 @@ class ReaderViewModel(
         viewModelScope.launch {
             settingsDataStore.saveAllSettings(newSettings)
         }
-    }
-
-    fun shareToVoice(context: Context) {
-        val chapter = _currentChapter.value ?: return
-        val n = novel.value ?: return
-        val text = "${chapter.title}\n\n${_renderedContent.value}"
-        val sendIntent = Intent().apply {
-            action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_TITLE, "${n.title} - ${chapter.title}")
-            putExtra(Intent.EXTRA_SUBJECT, "${n.title} - ${chapter.title}")
-            putExtra(Intent.EXTRA_TEXT, text)
-            type = "text/plain"
-        }
-        val chooser = Intent.createChooser(sendIntent, "Play in @Voice / Share")
-        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(chooser)
     }
 
     override fun onCleared() {
