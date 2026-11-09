@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -101,6 +102,7 @@ fun NovelDetailScreen(
     onPlayNovel: (String) -> Unit,
     onOpenEditor: (String?) -> Unit,
     onOpenReplacements: () -> Unit,
+    onOpenVoices: () -> Unit = {},
     ttsInfo: com.example.tts.TtsPlaybackInfo = com.example.tts.TtsPlaybackInfo()
 ) {
     val context = LocalContext.current
@@ -478,6 +480,18 @@ fun NovelDetailScreen(
                                     .testTag("detail_export_novel_button")
                             )
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        MtlActionButton(
+                            text = "Character voices",
+                            icon = Icons.Default.RecordVoiceOver,
+                            onClick = onOpenVoices,
+                            style = MtlButtonStyle.Subtle,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("detail_open_voices_button")
+                        )
                     }
                 }
             }

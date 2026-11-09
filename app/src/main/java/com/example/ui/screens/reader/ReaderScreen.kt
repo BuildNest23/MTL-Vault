@@ -62,6 +62,7 @@ import com.example.data.model.ChapterSummary
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -133,7 +134,8 @@ import com.example.ui.theme.ReaderSepiaText
 fun ReaderScreen(
     viewModel: ReaderViewModel,
     onBackClick: () -> Unit,
-    onOpenReplacements: () -> Unit
+    onOpenReplacements: () -> Unit,
+    onOpenVoices: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val chapter by viewModel.currentChapter.collectAsStateWithLifecycle()
@@ -664,6 +666,17 @@ fun ReaderScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.List,
                             contentDescription = "Chapter list",
+                            tint = textColor
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onOpenVoices,
+                        modifier = Modifier.testTag("reader_voices_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.RecordVoiceOver,
+                            contentDescription = "Character voices",
                             tint = textColor
                         )
                     }

@@ -8,6 +8,7 @@ import com.example.data.model.ChapterSummary
 import com.example.data.model.NovelSummary
 import com.example.data.preferences.SettingsDataStore
 import com.example.importexport.BackupRestoreManager
+import com.example.tts.SpeakerTags
 import com.example.importexport.ChapterSplitter
 import com.example.importexport.SplitChapterResult
 import com.example.replacement.ReplacementEngine
@@ -131,6 +132,13 @@ class NovelRepository(
         touchNovelKeepingProgress(novelId, id)
         id
     } }
+
+    /** Every character named in a speaker tag (@Name: ...) anywhere in the novel: key -> name as written. */
+    suspend fun findSpeakerNames(novelId: String): Map<String, String> = withContext(Dispatchers.IO) {
+        val names = LinkedHashMap<String, String>()
+        chapterDao.getTaggedChapterContents(novelId).forEach { SpeakerTags.findNames(it, names) }
+        names
+    }
 
     /** Saves an edited title and text without touching read state or reading position. */
     suspend fun updateChapterText(chapter: ChapterEntity, title: String, content: String) = withContext(Dispatchers.IO) {

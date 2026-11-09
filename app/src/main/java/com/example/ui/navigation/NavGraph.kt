@@ -45,6 +45,8 @@ import com.example.ui.screens.library.LibraryViewModel
 import com.example.ui.screens.reader.ReaderScreen
 import com.example.ui.screens.reader.ReaderViewModel
 import com.example.ui.screens.replacements.ReplacementsScreen
+import com.example.ui.screens.voices.VoicesScreen
+import com.example.ui.screens.voices.VoicesViewModel
 import com.example.ui.screens.replacements.ReplacementsViewModel
 import com.example.ui.screens.stats.StatsScreen
 import com.example.ui.screens.stats.StatsViewModel
@@ -343,6 +345,9 @@ fun MtlVaultNavGraph(
                     },
                     onOpenReplacements = {
                         navController.navigate(Screen.Replacements.createRoute(novelId))
+                    },
+                    onOpenVoices = {
+                        navController.navigate(Screen.Voices.createRoute(novelId))
                     }
                 )
             }
@@ -379,6 +384,9 @@ fun MtlVaultNavGraph(
                     onBackClick = { navController.popBackStack() },
                     onOpenReplacements = {
                         navController.navigate(Screen.Replacements.createRoute(novelId))
+                    },
+                    onOpenVoices = {
+                        navController.navigate(Screen.Voices.createRoute(novelId))
                     }
                 )
             }
@@ -407,6 +415,25 @@ fun MtlVaultNavGraph(
                     }
                 )
                 ChapterEditorScreen(
+                    viewModel = viewModel,
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
+
+            // Subview: Character voices
+            composable(
+                route = Screen.Voices.route,
+                arguments = listOf(
+                    navArgument("novelId") { type = NavType.StringType }
+                )
+            ) { backStackEntry ->
+                val novelId = backStackEntry.arguments?.getString("novelId") ?: ""
+                val viewModel: VoicesViewModel = viewModel(
+                    factory = vmFactory {
+                        VoicesViewModel(novelId, application.novelRepository, application.voiceCastStore, application.ttsManager)
+                    }
+                )
+                VoicesScreen(
                     viewModel = viewModel,
                     onBackClick = { navController.popBackStack() }
                 )

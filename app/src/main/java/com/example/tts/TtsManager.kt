@@ -35,7 +35,22 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
          * Single source of truth for splitting text into paragraphs across ReaderScreen and TtsManager.
          * Ensures a strict 1-to-1 match between UI paragraphs and TTS chunks so highlights are never misaligned.
          */
+        /**
+         * The paragraphs of a chapter as shown and spoken: speaker tags (@Name: ...) are removed and
+         * the speaker is kept beside the text. The screen and the speech both use this, so they
+         * always have the same paragraphs.
+         */
+        fun parseParagraphsWithSpeakers(content: String, maxChars: Int = Int.MAX_VALUE): List<ParsedParagraph> {
+            return rawParagraphs(content)
+                .flatMap { SpeakerTags.splitBlock(it) }
+                .mapNotNull { SpeakerTags.parse(it) }
+        }
+
         fun parseParagraphs(content: String, maxChars: Int = Int.MAX_VALUE): List<String> {
+            return parseParagraphsWithSpeakers(content, maxChars).map { it.text }
+        }
+
+        private fun rawParagraphs(content: String): List<String> {
             if (content.isBlank()) return emptyList()
             val blocks = content.split(Regex("(\r?\n){2,}"))
                 .map { it.trim() }
@@ -184,6 +199,16 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     private var speechPitch = 1.0f
     private var selectedVoiceName: String? = null
 
+    // Character voices: who speaks each paragraph, and which voice each character was given
+    private val voiceCastStore = VoiceCastStore(context.applicationContext)
+    @Volatile
+    private var currentCast = VoiceCast()
+    @Volatile
+    private var chunkSpeakers: List<String?> = emptyList()
+    private var defaultVoiceName: String? = null
+    private var voiceByName: Map<String, android.speech.tts.Voice>? = null
+    private var appliedVoiceName: String? = null
+
     // Which speech engine the phone voice uses (package name, "" = the system default).
     // [requestedEngine] is what the settings ask for; [activeEngine] is what actually started
     // (it falls back to "" if the chosen engine is missing or fails to start).
@@ -259,6 +284,9 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
         tts = null
         isInitialized = false
+        voiceByName = null
+        appliedVoiceName = null
+        defaultVoiceName = null
 
         try {
             tts = if (activeEngine.isBlank()) {
@@ -319,6 +347,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 engine.setSpeechRate(speechRate)
                 engine.setPitch(speechPitch)
 
+                defaultVoiceName = try { engine.voice?.name } catch (e: Exception) { null }
                 if (selectedVoiceName != null) {
                     try {
                         engine.voices?.find { it.name == selectedVoiceName }?.let {
@@ -330,6 +359,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                         AppLogger.w("TtsManager", "Could not restore voice: ${e.localizedMessage}")
                     }
                 }
+                appliedVoiceName = try { engine.voice?.name } catch (e: Exception) { null }
 
                 setupProgressListener(engine)
             }
@@ -654,7 +684,10 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         onChapterCompleteCallback = onChapterComplete
         resumeChunkIndex = -1
         resumeCharOffset = 0
-        chunks = parseParagraphs(content, maxChars)
+        val parsedParagraphs = parseParagraphsWithSpeakers(content, maxChars)
+        chunks = parsedParagraphs.map { it.text }
+        chunkSpeakers = parsedParagraphs.map { it.speaker }
+        currentCast = voiceCastStore.load(novelId)
         chapterSentences = chunks.map { SentenceSplitter.splitIntoSentences(it) }
         _playbackInfo.value = _playbackInfo.value.copy(
             novelId = novelId,
@@ -834,6 +867,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
         val chunkText = if (sub.text.any { it.isLetterOrDigit() }) sub.text else "."
         activeUtteranceId = utteranceId
+        applyVoiceForChunk(engine, chunkIndex)
         val result = engine.speak(chunkText, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
         AppLogger.d("TtsManager", "speak: utteranceId=$utteranceId, chunkIndex=$chunkIndex, sub=$currentSubUtteranceIndex, len=${chunkText.length}, result=$result")
 
@@ -1321,6 +1355,31 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         tts?.setPitch(pitch)
     }
 
+    /**
+     * Gives the paragraph its speaker's voice (or the narrator's voice for narration) before it is
+     * spoken. Characters without an assigned voice use the narrator's voice.
+     */
+    private fun applyVoiceForChunk(engine: TextToSpeech, chunkIndex: Int) {
+        val cast = currentCast
+        val speaker = chunkSpeakers.getOrNull(chunkIndex)
+        val base = cast.narrator.ifBlank { selectedVoiceName ?: defaultVoiceName ?: "" }
+        val wanted = if (speaker != null) cast.voices[speaker].orEmpty().ifBlank { base } else base
+        if (wanted.isBlank() || wanted == appliedVoiceName) return
+        try {
+            val map = voiceByName ?: (engine.voices?.associateBy { it.name } ?: emptyMap()).also { voiceByName = it }
+            val voice = map[wanted] ?: return
+            engine.voice = voice
+            appliedVoiceName = wanted
+        } catch (e: Exception) {
+            AppLogger.w("TtsManager", "Could not switch to voice $wanted: ${e.localizedMessage}")
+        }
+    }
+
+    /** Re-reads the voice cast of a novel after it was edited, so the change applies straight away. */
+    fun reloadCast(novelId: String) {
+        if (novelId == currentNovelId) currentCast = voiceCastStore.load(novelId)
+    }
+
     /** A speech engine installed on the phone: its package name and display name. */
     data class PhoneEngineInfo(val packageName: String, val label: String)
 
@@ -1379,17 +1438,19 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
-    /** Name of the voice the phone engine is using right now, or null. */
-    fun getCurrentPhoneVoiceName(): String? {
-        return try { tts?.voice?.name } catch (e: Exception) { null }
-    }
-
     /** Speaks a short sample with the phone engine and current voice. Does nothing while reading. */
-    fun previewPhoneVoice(text: String) {
+    fun previewPhoneVoice(text: String, voiceName: String = "") {
         if (isSpeakingActive) return
         val engine = tts ?: return
         if (!isInitialized) return
         try {
+            if (voiceName.isNotBlank()) {
+                val map = voiceByName ?: (engine.voices?.associateBy { it.name } ?: emptyMap()).also { voiceByName = it }
+                map[voiceName]?.let {
+                    engine.voice = it
+                    appliedVoiceName = voiceName
+                }
+            }
             engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "preview_" + System.currentTimeMillis())
         } catch (e: Exception) {
             AppLogger.w("TtsManager", "Preview failed: ${e.localizedMessage}")
@@ -1403,6 +1464,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             val target = engine.voices?.find { it.name == voiceName }
             if (target != null) {
                 engine.voice = target
+                appliedVoiceName = voiceName
             }
         } catch (e: Exception) {
             AppLogger.w("TtsManager", "Could not set voice: ${e.localizedMessage}")

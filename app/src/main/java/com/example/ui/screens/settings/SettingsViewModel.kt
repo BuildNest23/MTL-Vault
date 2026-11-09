@@ -103,8 +103,6 @@ class SettingsViewModel(
 
     fun phoneVoices(): List<TtsManager.PhoneVoiceInfo> = ttsManager?.getPhoneVoices() ?: emptyList()
 
-    fun currentPhoneVoiceName(): String? = ttsManager?.getCurrentPhoneVoiceName()
-
     fun previewPhoneVoice() {
         ttsManager?.previewPhoneVoice("The quick brown fox jumps over the lazy dog. This is how I sound.")
     }

@@ -436,8 +436,10 @@ class ReaderViewModel(
         val oldSplit = com.example.data.model.ParagraphSplitMode.fromString(oldMode)
         val newSplit = com.example.data.model.ParagraphSplitMode.fromString(newMode)
 
-        val oldChunks = com.example.tts.ParagraphSplitter.parseParagraphChunks(content, oldSplit.maxChars)
-        val newChunks = com.example.tts.ParagraphSplitter.parseParagraphChunks(content, newSplit.maxChars)
+        // Speaker tags (@Name:) are not shown or spoken, so they must not count here either
+        val plainContent = com.example.tts.SpeakerTags.strip(content)
+        val oldChunks = com.example.tts.ParagraphSplitter.parseParagraphChunks(plainContent, oldSplit.maxChars)
+        val newChunks = com.example.tts.ParagraphSplitter.parseParagraphChunks(plainContent, newSplit.maxChars)
 
         val isTtsActive = ttsManager.isPlaying() || ttsManager.playbackInfo.value.state == com.example.tts.TtsState.PAUSED
         val activeChunkIndex = if (isTtsActive) {

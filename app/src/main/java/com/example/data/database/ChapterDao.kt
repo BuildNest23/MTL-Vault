@@ -53,6 +53,10 @@ interface ChapterDao {
     @Update
     suspend fun updateChapter(chapter: ChapterEntity)
 
+    /** Text of every chapter that contains an "@" (so it may hold speaker tags), in reading order. */
+    @Query("SELECT content FROM chapters WHERE novelId = :novelId AND content LIKE '%@%' ORDER BY orderIndex")
+    suspend fun getTaggedChapterContents(novelId: String): List<String>
+
     /** Saves only the text fields, so reading progress that changed meanwhile is never overwritten. */
     @Query("UPDATE chapters SET title = :title, content = :content, wordCount = :wordCount, updatedAt = :updatedAt WHERE id = :chapterId")
     suspend fun updateChapterText(chapterId: String, title: String, content: String, wordCount: Int, updatedAt: Long)

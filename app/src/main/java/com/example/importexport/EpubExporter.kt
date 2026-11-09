@@ -218,7 +218,7 @@ $spineItemrefs  </spine>
         val chapterRtl = isRtlText(displayTitle + " " + chapter.content.take(500))
         val chapterLang = if (chapterRtl) detectLanguage(displayTitle + " " + chapter.content.take(500)) else defaultLanguage
 
-        val paragraphs = chapter.content.lines()
+        val paragraphs = com.example.tts.SpeakerTags.strip(chapter.content).lines()
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .joinToString("\n") { para ->
