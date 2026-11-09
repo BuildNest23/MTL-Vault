@@ -770,6 +770,9 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 AppLogger.i("TtsManager", "Fallback setLanguage(getDefault) result=$sysRes")
             }
         }
+        // Changing the language makes the engine fall back to its default voice for that language,
+        // so the voice that was applied before is no longer the one in use.
+        appliedVoiceName = null
     }
 
     private fun detectLocaleForText(sample: String): Locale {
@@ -1366,13 +1369,33 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         val wanted = if (speaker != null) cast.voices[speaker].orEmpty().ifBlank { base } else base
         if (wanted.isBlank() || wanted == appliedVoiceName) return
         try {
-            val map = voiceByName ?: (engine.voices?.associateBy { it.name } ?: emptyMap()).also { voiceByName = it }
-            val voice = map[wanted] ?: return
-            engine.voice = voice
-            appliedVoiceName = wanted
+            val voice = findVoice(engine, wanted)
+            if (voice == null) {
+                AppLogger.w("TtsManager", "Voice not found: '$wanted' (speaker=${speaker ?: "narration"}, chunk=$chunkIndex). Keeping '${appliedVoiceName}'")
+                return
+            }
+            val res = engine.setVoice(voice)
+            if (res == TextToSpeech.SUCCESS) {
+                appliedVoiceName = wanted
+            } else {
+                appliedVoiceName = null
+            }
+            AppLogger.i("TtsManager", "Voice switch: speaker=${speaker ?: "narration"}, chunk=$chunkIndex, voice='$wanted', result=$res")
         } catch (e: Exception) {
+            appliedVoiceName = null
             AppLogger.w("TtsManager", "Could not switch to voice $wanted: ${e.localizedMessage}")
         }
+    }
+
+    /**
+     * Finds a voice by name. The list is cached, but voices can be added while the app is open
+     * (for example a cloned voice), so a miss re-reads the engine's list once before giving up.
+     */
+    private fun findVoice(engine: TextToSpeech, name: String): android.speech.tts.Voice? {
+        voiceByName?.get(name)?.let { return it }
+        val fresh = engine.voices?.associateBy { it.name } ?: emptyMap()
+        voiceByName = fresh
+        return fresh[name]
     }
 
     /** Re-reads the voice cast of a novel after it was edited, so the change applies straight away. */
@@ -1426,6 +1449,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     fun getPhoneVoices(): List<PhoneVoiceInfo> {
         return try {
             val voices = tts?.voices ?: return emptyList()
+            voiceByName = voices.associateBy { it.name }
             voices
                 .sortedWith(
                     compareBy<android.speech.tts.Voice>({ !it.locale.language.equals("en", ignoreCase = true) }, { it.locale.toString() }, { it.name })
@@ -1445,10 +1469,13 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         if (!isInitialized) return
         try {
             if (voiceName.isNotBlank()) {
-                val map = voiceByName ?: (engine.voices?.associateBy { it.name } ?: emptyMap()).also { voiceByName = it }
-                map[voiceName]?.let {
-                    engine.voice = it
-                    appliedVoiceName = voiceName
+                val voice = findVoice(engine, voiceName)
+                if (voice == null) {
+                    AppLogger.w("TtsManager", "Preview: voice not found: '$voiceName'")
+                } else {
+                    val res = engine.setVoice(voice)
+                    appliedVoiceName = if (res == TextToSpeech.SUCCESS) voiceName else null
+                    AppLogger.i("TtsManager", "Preview voice='$voiceName' result=$res")
                 }
             }
             engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "preview_" + System.currentTimeMillis())
