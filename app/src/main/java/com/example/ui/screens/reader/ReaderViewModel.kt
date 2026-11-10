@@ -101,22 +101,12 @@ class ReaderViewModel(
 
     private var loadChapterJob: Job? = null
 
-    // True when the rules changed while TTS was reading this chapter; applied as soon as TTS stops.
-    private var pendingRefresh = false
-
     init {
         loadChapter(initialChapterId)
         ttsManager.onNextChapterRequested = onNextRequested
         ttsManager.onPrevChapterRequested = onPrevRequested
         if (ttsManager.isPlayingChapter(novelId, initialChapterId)) {
             ttsManager.onChapterCompleteCallback = onTtsChapterComplete
-        }
-
-        // If a rule change was held back because TTS was reading, apply it once TTS stops.
-        viewModelScope.launch {
-            ttsManager.playbackInfo.collect {
-                if (pendingRefresh) refreshRenderedContent()
-            }
         }
 
         // When the novel's rules change (e.g. edited on the Rules screen), re-render the open chapter.
@@ -224,19 +214,28 @@ class ReaderViewModel(
         }
     }
 
-    /** Re-renders the open chapter with the latest rules. Skipped while TTS is reading it, so the
-     *  spoken text and the highlighted paragraphs never get out of step. */
+    /**
+     * Re-renders the open chapter with the latest rules and shows it straight away. When TTS is
+     * reading (or paused on) this chapter, the speech is restarted on the same paragraph with the
+     * new text, and stays paused if it was paused, so what is heard matches what is shown.
+     */
     private suspend fun refreshRenderedContent() {
         val chapter = _currentChapter.value ?: return
+        val rendered = repository.getRenderedChapterContent(novelId, chapter)
+        if (rendered == _renderedContent.value) return
         val info = ttsManager.playbackInfo.value
         val ttsActiveHere = info.chapterId == chapter.id &&
             (info.state == com.example.tts.TtsState.PLAYING || info.state == com.example.tts.TtsState.PAUSED)
+        _renderedContent.value = rendered
         if (ttsActiveHere) {
-            pendingRefresh = true
-            return
+            val wasPaused = info.state == com.example.tts.TtsState.PAUSED
+            val paragraphCount = TtsManager.parseParagraphs(rendered).size
+            val index = info.currentChunkIndex.coerceIn(0, (paragraphCount - 1).coerceAtLeast(0))
+            startTtsForChapter(chapter, rendered, index)
+            if (wasPaused) {
+                ttsManager.pause()
+            }
         }
-        pendingRefresh = false
-        _renderedContent.value = repository.getRenderedChapterContent(novelId, chapter)
     }
 
     fun updateReadingPosition(paragraphIndex: Int, scrollY: Int, scrollPercent: Float) {

@@ -3,6 +3,8 @@ package com.example.ui.screens.voices
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.repository.NovelRepository
+import com.example.replacement.ReplacementEngine
+import com.example.tts.SpeakerTags
 import com.example.tts.TtsManager
 import com.example.tts.VoiceCast
 import com.example.tts.VoiceCastStore
@@ -55,9 +57,37 @@ class VoicesViewModel(
     fun refresh() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true)
-            val title = repository.getNovelByIdSync(novelId)?.title ?: ""
-            val (found, counts) = repository.findSpeakers(novelId)
+            val novel = repository.getNovelByIdSync(novelId)
+            val title = novel?.title ?: ""
+            val (foundRaw, countsRaw) = repository.findSpeakers(novelId)
             cast = store.load(novelId)
+
+            // The reader and the speech use the text AFTER the novel's replacement rules, so a name
+            // changed by a rule (@Young Man -> @Hector) must be listed, and its voice saved, under
+            // the new name. Voices and marks chosen under the old name are carried over once.
+            val rules = try { ReplacementEngine.parseRules(novel?.replacements ?: "") } catch (e: Exception) { emptyList() }
+            val found = LinkedHashMap<String, String>()
+            val counts = HashMap<String, Int>()
+            val voices = LinkedHashMap(cast.voices)
+            val genders = LinkedHashMap(cast.genders)
+            var migrated = false
+            foundRaw.forEach { (oldKey, oldName) ->
+                val shown = if (rules.isEmpty()) oldName else {
+                    try { ReplacementEngine.applyRules(oldName, rules).trim().ifBlank { oldName } } catch (e: Exception) { oldName }
+                }
+                val key = SpeakerTags.normalizeKey(shown)
+                if (key !in found) found[key] = shown
+                counts[key] = (counts[key] ?: 0) + (countsRaw[oldKey] ?: 0)
+                if (key != oldKey) {
+                    if (voices[key].isNullOrBlank() && !voices[oldKey].isNullOrBlank()) { voices[key] = voices[oldKey]!!; migrated = true }
+                    if (genders[key].isNullOrBlank() && !genders[oldKey].isNullOrBlank()) { genders[key] = genders[oldKey]!!; migrated = true }
+                }
+            }
+            if (migrated) {
+                cast = cast.copy(voices = voices, genders = genders)
+                store.save(novelId, cast)
+                ttsManager.reloadCast(novelId)
+            }
 
             // Characters found in the chapters first, then any that have a saved voice but are no longer found
             val names = LinkedHashMap<String, String>()
@@ -93,6 +123,18 @@ class VoicesViewModel(
         save()
         _state.value = _state.value.copy(narratorVoice = voiceName)
         preview(voiceName)
+    }
+
+    /** Clears the narrator voice, both default voices, every character's voice and every Male/Female mark. */
+    fun resetAll() {
+        cast = VoiceCast(names = cast.names)
+        save()
+        _state.value = _state.value.copy(
+            narratorVoice = "",
+            defaultMale = "",
+            defaultFemale = "",
+            rows = _state.value.rows.map { it.copy(voice = "", gender = "") }
+        )
     }
 
     fun setDefaultVoice(male: Boolean, voiceName: String) {

@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,6 +50,30 @@ fun VoicesScreen(
     onBackClick: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var confirmReset by remember { mutableStateOf(false) }
+
+    if (confirmReset) {
+        AlertDialog(
+            onDismissRequest = { confirmReset = false },
+            title = { Text("Reset all voices?") },
+            text = {
+                Text(
+                    "This clears the narrator voice, the default male and female voices, every character's " +
+                        "voice and every Male/Female mark for this novel. Your chapters are not changed."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.resetAll()
+                        confirmReset = false
+                    },
+                    modifier = Modifier.testTag("voices_reset_confirm")
+                ) { Text("Reset") }
+            },
+            dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Cancel") } }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -57,6 +82,12 @@ fun VoicesScreen(
                 subtitle = state.novelTitle.ifBlank { "Novel" },
                 onBackClick = onBackClick,
                 actions = {
+                    IconButton(
+                        onClick = { confirmReset = true },
+                        modifier = Modifier.testTag("voices_reset_button")
+                    ) {
+                        Icon(Icons.Default.RestartAlt, contentDescription = "Reset all voices")
+                    }
                     IconButton(
                         onClick = { viewModel.refresh() },
                         modifier = Modifier.testTag("voices_refresh_button")
