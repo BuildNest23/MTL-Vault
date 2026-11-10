@@ -8,23 +8,26 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -181,7 +184,7 @@ private fun VoiceCard(
     onGender: (String) -> Unit = {}
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    val label = if (voice.isBlank()) blankLabel else (voices.find { it.name == voice }?.label ?: voice)
+    val label = if (voice.isBlank()) blankLabel else (voices.find { it.name == voice }?.let { shortLabel(it) } ?: voice)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -223,31 +226,81 @@ private fun VoiceCard(
                 ) {
                     Text("Voice: $label", maxLines = 1)
                 }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text(blankLabel) },
-                        onClick = {
-                            onPick("")
+                if (menuOpen) {
+                    VoicePickerDialog(
+                        blankLabel = blankLabel,
+                        voices = voices,
+                        onPick = {
+                            onPick(it)
                             menuOpen = false
-                        }
+                        },
+                        onDismiss = { menuOpen = false }
                     )
-                    if (voices.isEmpty()) {
-                        DropdownMenuItem(
-                            text = { Text("Voices are still loading. Close this and try again.") },
-                            onClick = { menuOpen = false }
-                        )
-                    }
-                    voices.forEach { v ->
-                        DropdownMenuItem(
-                            text = { Text(v.label) },
-                            onClick = {
-                                onPick(v.name)
-                                menuOpen = false
-                            }
-                        )
-                    }
                 }
             }
         }
     }
+}
+
+/** "Travis - English  (English (United States))" -> "Travis". Other languages keep their full label. */
+private fun shortLabel(v: TtsManager.PhoneVoiceInfo): String {
+    return if (v.label.contains("(English")) v.label.substringBefore("  (").removeSuffix(" - English") else v.label
+}
+
+/** A scrollable, searchable list of voices (a dropdown is too long for dozens of voices). */
+@Composable
+private fun VoicePickerDialog(
+    blankLabel: String,
+    voices: List<TtsManager.PhoneVoiceInfo>,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val shown = remember(query, voices) {
+        if (query.isBlank()) voices else voices.filter { shortLabel(it).contains(query.trim(), ignoreCase = true) }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Choose a voice") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    label = { Text("Search") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
+                    item {
+                        Text(
+                            text = blankLabel,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.fillMaxWidth().clickable { onPick("") }.padding(vertical = 12.dp)
+                        )
+                    }
+                    if (voices.isEmpty()) {
+                        item {
+                            Text(
+                                text = "Voices are still loading. Close this and try again.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(vertical = 12.dp)
+                            )
+                        }
+                    }
+                    items(shown, key = { it.name }) { v ->
+                        Text(
+                            text = shortLabel(v),
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 1,
+                            modifier = Modifier.fillMaxWidth().clickable { onPick(v.name) }.padding(vertical = 12.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
 }
