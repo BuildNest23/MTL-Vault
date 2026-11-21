@@ -231,10 +231,7 @@ class ReaderViewModel(
             val wasPaused = info.state == com.example.tts.TtsState.PAUSED
             val paragraphCount = TtsManager.parseParagraphs(rendered).size
             val index = info.currentChunkIndex.coerceIn(0, (paragraphCount - 1).coerceAtLeast(0))
-            startTtsForChapter(chapter, rendered, index)
-            if (wasPaused) {
-                ttsManager.pause()
-            }
+            startTtsForChapter(chapter, rendered, index, startPaused = wasPaused)
         }
     }
 
@@ -413,7 +410,7 @@ class ReaderViewModel(
         }
     }
 
-    private fun startTtsForChapter(chapter: ChapterEntity, content: String, startFromChunkIndex: Int) {
+    private fun startTtsForChapter(chapter: ChapterEntity, content: String, startFromChunkIndex: Int, startPaused: Boolean = false) {
         val currentSettings = settings.value
         val splitMode = com.example.data.model.ParagraphSplitMode.fromString(currentSettings.splitLongParagraphs)
         ttsManager.playChapter(
@@ -423,7 +420,8 @@ class ReaderViewModel(
             content = content,
             startFromChunkIndex = startFromChunkIndex,
             maxChars = splitMode.maxChars,
-            onChapterComplete = onTtsChapterComplete
+            onChapterComplete = onTtsChapterComplete,
+            startPaused = startPaused
         )
     }
 

@@ -704,7 +704,9 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         content: String,
         startFromChunkIndex: Int = 0,
         maxChars: Int = Int.MAX_VALUE,
-        onChapterComplete: (() -> Unit)? = null
+        onChapterComplete: (() -> Unit)? = null,
+        /** Load the chapter and sit on [startFromChunkIndex] in the paused state, without speaking. */
+        startPaused: Boolean = false
     ) {
         // prepareChapter splits the text (same 1-to-1 paragraphs as the screen) and stores the chapter info
         prepareChapter(novelId, chapterId, chapterTitle, content, maxChars, onChapterComplete)
@@ -715,6 +717,26 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         AppLogger.i("TtsManager", "playChapter: novelId=$novelId, chapterId=$chapterId, title=$chapterTitle, chunks=${chunks.size}, maxChunkLen=$longestChunk, startIndex=$startFromChunkIndex, maxChars=$maxChars")
 
         saveProgressInBackground(currentChunkIndex)
+
+        if (startPaused && chunks.isNotEmpty()) {
+            // Used when the text changes (a Replacement rule) while playback is paused. Starting to
+            // speak and pausing right away raced with the engine's "started" callback, which put the
+            // state back to PLAYING with no sound.
+            isSpeakingActive = false
+            try { tts?.stop() } catch (e: Exception) { }
+            edge?.stop()
+            _playbackInfo.value = TtsPlaybackInfo(
+                state = TtsState.PAUSED,
+                novelId = novelId,
+                chapterId = chapterId,
+                chapterTitle = chapterTitle,
+                totalChunks = chunks.size,
+                currentChunkIndex = currentChunkIndex,
+                errorMessage = null
+            )
+            AppLogger.i("TtsManager", "Playback state: PAUSED (reloaded), chunk=$currentChunkIndex/${chunks.size}")
+            return
+        }
 
         if (chunks.isEmpty()) {
             AppLogger.w("TtsManager", "playChapter: chunks empty for chapterId=$chapterId")
