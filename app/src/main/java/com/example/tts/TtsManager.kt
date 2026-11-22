@@ -188,6 +188,13 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     @Volatile private var activeUtteranceId: String? = null
     @Volatile
     private var lastAdvancedChunk = -1
+
+    /**
+     * Bumped every time a paragraph is started (tap on a sentence, seek, resume, next paragraph).
+     * Delayed "move on" jobs remember the value they were created with and do nothing if it has
+     * changed, so a tap that goes back is not overridden by a job from the paragraph that was playing.
+     */
+    @Volatile private var speakGeneration = 0
     private var currentNovelId: String? = null
     private var currentChapterId: String? = null
     private var currentChapterTitle: String = ""
@@ -483,9 +490,12 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             val finishedChunk = parsed.chunkIndex
             val finishedSub = parsed.subIndex
 
+            val generationAtFinish = speakGeneration
             if (finishedSub + 1 < currentSubUtterances.size) {
-                currentSubUtteranceIndex = finishedSub + 1
                 mainScope.launch {
+                    // A tap or seek that happened in between started something else: do nothing
+                    if (generationAtFinish != speakGeneration || !isSpeakingActive) return@launch
+                    currentSubUtteranceIndex = finishedSub + 1
                     speakCurrentSubUtterance(finishedChunk)
                 }
                 return
@@ -509,7 +519,9 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 val pauseMs = if (engine == null) EDGE_PARAGRAPH_PAUSE_MS else 800L
                 mainScope.launch {
                     delay(pauseMs)
-                    if (isSpeakingActive && currentChapterId == chapterAtFinish && currentChunkIndex == finishedChunk) {
+                    if (isSpeakingActive && currentChapterId == chapterAtFinish && currentChunkIndex == finishedChunk &&
+                        generationAtFinish == speakGeneration
+                    ) {
                         advanceToNextChunk(finishedChunk)
                     }
                 }
@@ -517,7 +529,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 mainScope.launch {
                     delay(2500)
                     if (isSpeakingActive && currentChapterId == chapterAtFinish &&
-                        currentChunkIndex == finishedChunk && lastAdvancedChunk < finishedChunk
+                        currentChunkIndex == finishedChunk && lastAdvancedChunk < finishedChunk &&
+                        generationAtFinish == speakGeneration
                     ) {
                         advanceToNextChunk(finishedChunk)
                     }
@@ -852,6 +865,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     private fun prepareAndSpeakChunk(index: Int, startCharOffset: Int = 0) {
         if (!isSpeakingActive || chunks.isEmpty()) return
+        speakGeneration++
         if (index < 0 || index >= chunks.size) {
             onChapterCompleteCallback?.invoke()
             return
