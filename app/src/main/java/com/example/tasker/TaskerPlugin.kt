@@ -22,15 +22,31 @@ object TaskerPlugin {
     const val KEY_NOVEL_TITLE = "novel_title"
     const val KEY_TEXT = "text"
 
+    /** The chapter number from the website (for example Tasker's %ancomm). Optional. */
+    const val KEY_CHAPTER = "chapter"
+
     /** What the "Chapter text" box is filled with by default; the Tasker task sets this variable. */
     const val DEFAULT_TEXT_VARIABLE = "%nb_text"
+    const val DEFAULT_CHAPTER_VARIABLE = "%ancomm"
 
-    fun buildBundle(novelId: String, novelTitle: String, text: String): Bundle = Bundle().apply {
+    fun buildBundle(novelId: String, novelTitle: String, text: String, chapter: String): Bundle = Bundle().apply {
         putString(KEY_NOVEL_ID, novelId)
         putString(KEY_NOVEL_TITLE, novelTitle)
         putString(KEY_TEXT, text)
-        putString(EXTRA_VARIABLE_REPLACE_KEYS, KEY_TEXT)
+        putString(KEY_CHAPTER, chapter)
+        putString(EXTRA_VARIABLE_REPLACE_KEYS, "$KEY_TEXT $KEY_CHAPTER")
     }
+
+    /** The chapter number as a plain positive integer, or null if blank, unresolved or not a number. */
+    fun parseChapterNumber(raw: String?): Int? {
+        val value = raw?.trim().orEmpty()
+        if (value.isEmpty() || looksUnresolved(value)) return null
+        return value.toIntOrNull()?.takeIf { it > 0 }
+    }
+
+    /** Chapter numbers already used in [titles], read the same way the app numbers new chapters. */
+    fun chapterNumbersIn(titles: List<String>): List<Int> =
+        titles.mapNotNull { CHAPTER_TITLE_REGEX.find(it)?.groupValues?.get(1)?.toIntOrNull() }
 
     /** Short summary Tasker shows under the action in the task list. */
     fun blurb(novelTitle: String): String = "Save next chapter to: $novelTitle".take(60)
@@ -55,6 +71,8 @@ object TaskerPlugin {
         return if (body.isBlank()) text else body
     }
 
+    private val CHAPTER_TITLE_REGEX =
+        Regex("""(?i)\b(?:chapter|ch|chapitre|capitulo|capítulo|ch\.)\s*(\d+)\b""")
     private val UNRESOLVED_REGEX = Regex("""^%[A-Za-z0-9_]+$""")
     private val HEADING_REGEX = Regex(
         """(?i)^(?:chapter|ch\.?|chapitre|capitulo|capítulo)\s*\d+.*$"""

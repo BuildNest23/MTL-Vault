@@ -51,13 +51,17 @@ class TaskerEditActivity : ComponentActivity() {
         val initialText = previous?.getString(TaskerPlugin.KEY_TEXT)
             ?.takeIf { it.isNotBlank() } ?: TaskerPlugin.DEFAULT_TEXT_VARIABLE
 
+        val initialChapter = previous?.getString(TaskerPlugin.KEY_CHAPTER)
+            ?.takeIf { it.isNotBlank() } ?: TaskerPlugin.DEFAULT_CHAPTER_VARIABLE
+
         setContent {
             MtlVaultTheme {
                 PickNovelDialog(
                     loadNovels = { repository.getNovelSummaries().first() },
                     initialNovelId = initialNovelId,
                     initialText = initialText,
-                    onConfirm = { novel, text -> finishWithResult(novel, text) },
+                    initialChapter = initialChapter,
+                    onConfirm = { novel, text, chapter -> finishWithResult(novel, text, chapter) },
                     onCancel = {
                         setResult(RESULT_CANCELED)
                         finish()
@@ -67,9 +71,9 @@ class TaskerEditActivity : ComponentActivity() {
         }
     }
 
-    private fun finishWithResult(novel: NovelSummary, text: String) {
+    private fun finishWithResult(novel: NovelSummary, text: String, chapter: String) {
         val result = Intent().apply {
-            putExtra(TaskerPlugin.EXTRA_BUNDLE, TaskerPlugin.buildBundle(novel.id, novel.title, text))
+            putExtra(TaskerPlugin.EXTRA_BUNDLE, TaskerPlugin.buildBundle(novel.id, novel.title, text, chapter))
             putExtra(TaskerPlugin.EXTRA_STRING_BLURB, TaskerPlugin.blurb(novel.title))
         }
         setResult(RESULT_OK, result)
@@ -82,12 +86,14 @@ private fun PickNovelDialog(
     loadNovels: suspend () -> List<NovelSummary>,
     initialNovelId: String?,
     initialText: String,
-    onConfirm: (NovelSummary, String) -> Unit,
+    initialChapter: String,
+    onConfirm: (NovelSummary, String, String) -> Unit,
     onCancel: () -> Unit
 ) {
     var novels by remember { mutableStateOf<List<NovelSummary>?>(null) }
     var selectedId by remember { mutableStateOf(initialNovelId) }
     var text by remember { mutableStateOf(initialText) }
+    var chapter by remember { mutableStateOf(initialChapter) }
 
     LaunchedEffect(Unit) {
         val list = try {
@@ -145,9 +151,17 @@ private fun PickNovelDialog(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = chapter,
+                            onValueChange = { chapter = it },
+                            label = { Text("Chapter number (Tasker variable, optional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "The chapter is saved as the next number after the highest chapter in the novel.",
+                            "With a chapter number the chapter is titled \"Chapter N\" and skipped if the novel already has it. Leave it empty and the app uses the next number after the highest chapter.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -158,7 +172,7 @@ private fun PickNovelDialog(
         confirmButton = {
             TextButton(
                 enabled = selected != null && text.isNotBlank(),
-                onClick = { selected?.let { onConfirm(it, text.trim()) } }
+                onClick = { selected?.let { onConfirm(it, text.trim(), chapter.trim()) } }
             ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } }

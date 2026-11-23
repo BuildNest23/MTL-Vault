@@ -29,8 +29,8 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/AndroidManifest.xml patched/app/
              android:authorities="${applicationId}.fileprovider"
 diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerEditActivity.kt patched/app/src/main/java/com/example/tasker/TaskerEditActivity.kt
 --- vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerEditActivity.kt	1970-01-01 05:00:00.000000000 +0500
-+++ patched/app/src/main/java/com/example/tasker/TaskerEditActivity.kt	2026-11-23 10:55:37.058377293 +0500
-@@ -0,0 +1,166 @@
++++ patched/app/src/main/java/com/example/tasker/TaskerEditActivity.kt	2026-11-23 16:16:32.759305414 +0500
+@@ -0,0 +1,180 @@
 +package com.example.tasker
 +
 +import android.content.Intent
@@ -84,13 +84,17 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerEd
 +        val initialText = previous?.getString(TaskerPlugin.KEY_TEXT)
 +            ?.takeIf { it.isNotBlank() } ?: TaskerPlugin.DEFAULT_TEXT_VARIABLE
 +
++        val initialChapter = previous?.getString(TaskerPlugin.KEY_CHAPTER)
++            ?.takeIf { it.isNotBlank() } ?: TaskerPlugin.DEFAULT_CHAPTER_VARIABLE
++
 +        setContent {
 +            MtlVaultTheme {
 +                PickNovelDialog(
 +                    loadNovels = { repository.getNovelSummaries().first() },
 +                    initialNovelId = initialNovelId,
 +                    initialText = initialText,
-+                    onConfirm = { novel, text -> finishWithResult(novel, text) },
++                    initialChapter = initialChapter,
++                    onConfirm = { novel, text, chapter -> finishWithResult(novel, text, chapter) },
 +                    onCancel = {
 +                        setResult(RESULT_CANCELED)
 +                        finish()
@@ -100,9 +104,9 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerEd
 +        }
 +    }
 +
-+    private fun finishWithResult(novel: NovelSummary, text: String) {
++    private fun finishWithResult(novel: NovelSummary, text: String, chapter: String) {
 +        val result = Intent().apply {
-+            putExtra(TaskerPlugin.EXTRA_BUNDLE, TaskerPlugin.buildBundle(novel.id, novel.title, text))
++            putExtra(TaskerPlugin.EXTRA_BUNDLE, TaskerPlugin.buildBundle(novel.id, novel.title, text, chapter))
 +            putExtra(TaskerPlugin.EXTRA_STRING_BLURB, TaskerPlugin.blurb(novel.title))
 +        }
 +        setResult(RESULT_OK, result)
@@ -115,12 +119,14 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerEd
 +    loadNovels: suspend () -> List<NovelSummary>,
 +    initialNovelId: String?,
 +    initialText: String,
-+    onConfirm: (NovelSummary, String) -> Unit,
++    initialChapter: String,
++    onConfirm: (NovelSummary, String, String) -> Unit,
 +    onCancel: () -> Unit
 +) {
 +    var novels by remember { mutableStateOf<List<NovelSummary>?>(null) }
 +    var selectedId by remember { mutableStateOf(initialNovelId) }
 +    var text by remember { mutableStateOf(initialText) }
++    var chapter by remember { mutableStateOf(initialChapter) }
 +
 +    LaunchedEffect(Unit) {
 +        val list = try {
@@ -178,9 +184,17 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerEd
 +                            singleLine = true,
 +                            modifier = Modifier.fillMaxWidth()
 +                        )
++                        Spacer(Modifier.height(8.dp))
++                        OutlinedTextField(
++                            value = chapter,
++                            onValueChange = { chapter = it },
++                            label = { Text("Chapter number (Tasker variable, optional)") },
++                            singleLine = true,
++                            modifier = Modifier.fillMaxWidth()
++                        )
 +                        Spacer(Modifier.height(4.dp))
 +                        Text(
-+                            "The chapter is saved as the next number after the highest chapter in the novel.",
++                            "With a chapter number the chapter is titled \"Chapter N\" and skipped if the novel already has it. Leave it empty and the app uses the next number after the highest chapter.",
 +                            style = MaterialTheme.typography.bodySmall,
 +                            color = MaterialTheme.colorScheme.onSurfaceVariant
 +                        )
@@ -191,7 +205,7 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerEd
 +        confirmButton = {
 +            TextButton(
 +                enabled = selected != null && text.isNotBlank(),
-+                onClick = { selected?.let { onConfirm(it, text.trim()) } }
++                onClick = { selected?.let { onConfirm(it, text.trim(), chapter.trim()) } }
 +            ) { Text("Save") }
 +        },
 +        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } }
@@ -199,8 +213,8 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerEd
 +}
 diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerFireReceiver.kt patched/app/src/main/java/com/example/tasker/TaskerFireReceiver.kt
 --- vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerFireReceiver.kt	1970-01-01 05:00:00.000000000 +0500
-+++ patched/app/src/main/java/com/example/tasker/TaskerFireReceiver.kt	2026-11-23 10:55:37.056977699 +0500
-@@ -0,0 +1,66 @@
++++ patched/app/src/main/java/com/example/tasker/TaskerFireReceiver.kt	2026-11-23 16:16:32.758080174 +0500
+@@ -0,0 +1,87 @@
 +package com.example.tasker
 +
 +import android.content.BroadcastReceiver
@@ -215,13 +229,18 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerFi
 +import kotlinx.coroutines.Dispatchers
 +import kotlinx.coroutines.SupervisorJob
 +import kotlinx.coroutines.launch
++import kotlinx.coroutines.sync.Mutex
++import kotlinx.coroutines.sync.withLock
 +
 +/**
-+ * Runs the Tasker action: saves the given text as the next chapter of the chosen novel.
++ * Runs the Tasker action: saves the given text as a chapter of the chosen novel.
 + *
-+ * The chapter title is numbered by the app ("Chapter 2527" after the highest chapter already
-+ * in the novel), so chapters always go in ascending order. A leading "Chapter N: ..." line in the
-+ * text is dropped from the body because the title already carries the number.
++ * - If Tasker passes the website's chapter number, the chapter is titled "Chapter N" and skipped
++ *   when the novel already has a chapter N (so a repeated tap can never create a duplicate).
++ * - If no number is passed, the app numbers it itself: one more than the highest chapter.
++ * - A leading "Chapter N: ..." line in the text is dropped from the body, because the title
++ *   already carries the number.
++ * - Saves run one at a time, in the order they arrive, so a catch-up run keeps chapters in order.
 + */
 +class TaskerFireReceiver : BroadcastReceiver() {
 +
@@ -230,12 +249,13 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerFi
 +        val bundle = intent.getBundleExtra(TaskerPlugin.EXTRA_BUNDLE) ?: return
 +        val novelId = bundle.getString(TaskerPlugin.KEY_NOVEL_ID).orEmpty()
 +        val rawText = bundle.getString(TaskerPlugin.KEY_TEXT).orEmpty().trim()
++        val chapter = TaskerPlugin.parseChapterNumber(bundle.getString(TaskerPlugin.KEY_CHAPTER))
 +        val app = context.applicationContext as? MtlVaultApplication ?: return
 +
 +        val pending = goAsync()
 +        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
 +            val message = try {
-+                save(app, novelId, rawText)
++                saveMutex.withLock { save(app, novelId, rawText, chapter) }
 +            } catch (e: Exception) {
 +                AppLogger.e(TAG, "Tasker save failed", e)
 +                "Could not save chapter: ${e.message ?: "unknown error"}"
@@ -247,7 +267,7 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerFi
 +        }
 +    }
 +
-+    private suspend fun save(app: MtlVaultApplication, novelId: String, rawText: String): String {
++    private suspend fun save(app: MtlVaultApplication, novelId: String, rawText: String, chapter: Int?): String {
 +        if (novelId.isBlank()) return "MTL Vault: no novel selected in the Tasker action"
 +        if (rawText.isBlank() || TaskerPlugin.looksUnresolved(rawText)) {
 +            return "MTL Vault: no chapter text received (is the Tasker variable set?)"
@@ -257,20 +277,35 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerFi
 +        val novel = repository.getNovelByIdSync(novelId)
 +            ?: return "MTL Vault: that novel no longer exists. Pick it again in the Tasker action"
 +
-+        val title = repository.getNextDefaultChapterTitle(novelId)
 +        val body = TaskerPlugin.stripHeading(rawText)
-+        repository.addChapter(novelId, title, body)
-+        return "Saved to \"${novel.title}\": $title"
++
++        if (chapter == null) {
++            val title = repository.getNextDefaultChapterTitle(novelId)
++            repository.addChapter(novelId, title, body)
++            return "Saved to \"${novel.title}\": $title"
++        }
++
++        val existing = TaskerPlugin.chapterNumbersIn(app.database.chapterDao().getChapterTitles(novelId))
++        if (chapter in existing) return "Chapter $chapter is already in \"${novel.title}\" (skipped)"
++
++        repository.addChapter(novelId, "Chapter $chapter", body)
++        val highest = existing.maxOrNull()
++        return if (highest != null && highest > chapter) {
++            "Saved Chapter $chapter to \"${novel.title}\", but the novel already has Chapter $highest, so it was added at the end"
++        } else {
++            "Saved to \"${novel.title}\": Chapter $chapter"
++        }
 +    }
 +
 +    private companion object {
 +        const val TAG = "TaskerFireReceiver"
++        val saveMutex = Mutex()
 +    }
 +}
 diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerPlugin.kt patched/app/src/main/java/com/example/tasker/TaskerPlugin.kt
 --- vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerPlugin.kt	1970-01-01 05:00:00.000000000 +0500
-+++ patched/app/src/main/java/com/example/tasker/TaskerPlugin.kt	2026-11-23 10:55:37.055252210 +0500
-@@ -0,0 +1,62 @@
++++ patched/app/src/main/java/com/example/tasker/TaskerPlugin.kt	2026-11-23 16:16:32.757737947 +0500
+@@ -0,0 +1,80 @@
 +package com.example.tasker
 +
 +import android.os.Bundle
@@ -295,15 +330,31 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerPl
 +    const val KEY_NOVEL_TITLE = "novel_title"
 +    const val KEY_TEXT = "text"
 +
++    /** The chapter number from the website (for example Tasker's %ancomm). Optional. */
++    const val KEY_CHAPTER = "chapter"
++
 +    /** What the "Chapter text" box is filled with by default; the Tasker task sets this variable. */
 +    const val DEFAULT_TEXT_VARIABLE = "%nb_text"
++    const val DEFAULT_CHAPTER_VARIABLE = "%ancomm"
 +
-+    fun buildBundle(novelId: String, novelTitle: String, text: String): Bundle = Bundle().apply {
++    fun buildBundle(novelId: String, novelTitle: String, text: String, chapter: String): Bundle = Bundle().apply {
 +        putString(KEY_NOVEL_ID, novelId)
 +        putString(KEY_NOVEL_TITLE, novelTitle)
 +        putString(KEY_TEXT, text)
-+        putString(EXTRA_VARIABLE_REPLACE_KEYS, KEY_TEXT)
++        putString(KEY_CHAPTER, chapter)
++        putString(EXTRA_VARIABLE_REPLACE_KEYS, "$KEY_TEXT $KEY_CHAPTER")
 +    }
++
++    /** The chapter number as a plain positive integer, or null if blank, unresolved or not a number. */
++    fun parseChapterNumber(raw: String?): Int? {
++        val value = raw?.trim().orEmpty()
++        if (value.isEmpty() || looksUnresolved(value)) return null
++        return value.toIntOrNull()?.takeIf { it > 0 }
++    }
++
++    /** Chapter numbers already used in [titles], read the same way the app numbers new chapters. */
++    fun chapterNumbersIn(titles: List<String>): List<Int> =
++        titles.mapNotNull { CHAPTER_TITLE_REGEX.find(it)?.groupValues?.get(1)?.toIntOrNull() }
 +
 +    /** Short summary Tasker shows under the action in the task list. */
 +    fun blurb(novelTitle: String): String = "Save next chapter to: $novelTitle".take(60)
@@ -328,6 +379,8 @@ diff -ruN vault/MTL-Vault-ToBeSaid/app/src/main/java/com/example/tasker/TaskerPl
 +        return if (body.isBlank()) text else body
 +    }
 +
++    private val CHAPTER_TITLE_REGEX =
++        Regex("""(?i)\b(?:chapter|ch|chapitre|capitulo|capítulo|ch\.)\s*(\d+)\b""")
 +    private val UNRESOLVED_REGEX = Regex("""^%[A-Za-z0-9_]+$""")
 +    private val HEADING_REGEX = Regex(
 +        """(?i)^(?:chapter|ch\.?|chapitre|capitulo|capítulo)\s*\d+.*$"""
