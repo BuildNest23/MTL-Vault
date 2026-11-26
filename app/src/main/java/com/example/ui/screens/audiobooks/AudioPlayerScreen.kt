@@ -1,5 +1,6 @@
 package com.example.ui.screens.audiobooks
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -47,7 +48,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -77,11 +77,11 @@ fun AudioPlayerScreen(
     viewModel: AudioPlayerViewModel,
     onBack: () -> Unit
 ) {
-    val state by viewModel.player.collectAsState()
-    val settings by viewModel.settings.collectAsState()
-    val book by viewModel.book.collectAsState()
-    val chapters by viewModel.chapters.collectAsState()
-    val bookmarks by viewModel.bookmarks.collectAsState()
+    val state by viewModel.player.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val book by viewModel.book.collectAsStateWithLifecycle()
+    val chapters by viewModel.chapters.collectAsStateWithLifecycle()
+    val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
 
     var sheet by remember { mutableStateOf(PlayerSheet.NONE) }
     var menuOpen by remember { mutableStateOf(false) }

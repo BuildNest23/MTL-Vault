@@ -7,6 +7,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
+import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.File
 import java.io.FileInputStream
@@ -199,8 +200,17 @@ class AudioFileReader(context: Context) {
     fun readImageBytes(uri: Uri, maxBytes: Int = 15 * 1024 * 1024): ByteArray? {
         return try {
             resolver.openInputStream(uri)?.use { input ->
-                val bytes = input.readBytes()
-                if (bytes.size > maxBytes) null else bytes
+                val out = ByteArrayOutputStream()
+                val buf = ByteArray(16 * 1024)
+                var total = 0
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    total += n
+                    if (total > maxBytes) return null
+                    out.write(buf, 0, n)
+                }
+                out.toByteArray()
             }
         } catch (e: Exception) {
             null
@@ -230,7 +240,9 @@ class AudioFileReader(context: Context) {
             val file = File(folder, "$bookId.jpg")
             FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 88, out) }
             bitmap.recycle()
-            Uri.fromFile(file).toString()
+            val coverUri = Uri.fromFile(file).toString()
+            com.example.ui.components.evictAudioCoverCache(coverUri)
+            coverUri
         } catch (e: Exception) {
             null
         } catch (e: OutOfMemoryError) {
@@ -241,7 +253,9 @@ class AudioFileReader(context: Context) {
     /** Deletes the saved cover of a book, if there is one. Used when a book is removed. */
     fun deleteCover(bookId: String) {
         try {
-            File(File(appContext.filesDir, COVER_FOLDER), "$bookId.jpg").delete()
+            val file = File(File(appContext.filesDir, COVER_FOLDER), "$bookId.jpg")
+            com.example.ui.components.evictAudioCoverCache(Uri.fromFile(file).toString())
+            file.delete()
         } catch (e: Exception) {
             // nothing to do
         }

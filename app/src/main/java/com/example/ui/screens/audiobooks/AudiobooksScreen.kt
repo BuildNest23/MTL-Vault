@@ -1,5 +1,6 @@
 package com.example.ui.screens.audiobooks
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -45,7 +46,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -96,9 +96,9 @@ fun AudiobooksScreen(
     onOpenBook: (bookId: String) -> Unit,
     onAddBook: () -> Unit
 ) {
-    val shelf by viewModel.uiState.collectAsState()
-    val continueBook by viewModel.continueBook.collectAsState()
-    val nowPlaying by viewModel.nowPlaying.collectAsState()
+    val shelf by viewModel.uiState.collectAsStateWithLifecycle()
+    val continueBook by viewModel.continueBook.collectAsStateWithLifecycle()
+    val nowPlaying by viewModel.nowPlaying.collectAsStateWithLifecycle()
 
     val snackbarHost = remember { SnackbarHostState() }
     LaunchedEffect(viewModel) {

@@ -35,6 +35,9 @@ class MtlVaultApplication : Application() {
     lateinit var ttsManager: TtsManager
         private set
 
+    /** Which voice each character of each novel uses. */
+    val voiceCastStore: com.example.tts.VoiceCastStore by lazy { com.example.tts.VoiceCastStore(this) }
+
     lateinit var audioRepository: AudioRepository
         private set
 
@@ -43,6 +46,8 @@ class MtlVaultApplication : Application() {
 
     lateinit var audioController: AudioPlayerController
         private set
+
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onCreate() {
         super.onCreate()
@@ -56,6 +61,7 @@ class MtlVaultApplication : Application() {
             database = database
         )
         ttsManager = TtsManager(this)
+        AppLogger.voiceCountProvider = { ttsManager.getPhoneVoices().size }
 
         audioRepository = AudioRepository(database.audioDao())
         audioImporter = AudioImporter(this)
@@ -71,11 +77,14 @@ class MtlVaultApplication : Application() {
         }
         keepOnlyOneVoicePlaying()
 
-        CoroutineScope(Dispatchers.Default).launch {
+        appScope.launch {
             settingsDataStore.settingsFlow.collect { settings ->
                 AppLogger.isDetailedLogging = settings.detailedLogging
                 ttsManager.setSpeechRate(settings.ttsRate)
                 ttsManager.setSpeechPitch(settings.ttsPitch)
+                ttsManager.setEdgeMode(settings.ttsEngine == "edge", settings.edgeVoice)
+                ttsManager.setEdgeWifiOnly(settings.edgeWifiOnly)
+                ttsManager.setPhoneEngine(settings.phoneEngine)
                 if (settings.ttsVoice.isNotBlank()) {
                     ttsManager.setVoice(settings.ttsVoice)
                 }
@@ -87,9 +96,7 @@ class MtlVaultApplication : Application() {
      * An audiobook and text-to-speech never play together: starting one pauses the other.
      */
     private fun keepOnlyOneVoicePlaying() {
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-
-        scope.launch {
+        appScope.launch {
             audioController.state
                 .map { it.isPlaying }
                 .distinctUntilChanged()
@@ -97,7 +104,7 @@ class MtlVaultApplication : Application() {
                     if (audioPlaying && ttsManager.isPlaying()) ttsManager.pause()
                 }
         }
-        scope.launch {
+        appScope.launch {
             ttsManager.playbackInfo
                 .map { it.state == TtsState.PLAYING }
                 .distinctUntilChanged()

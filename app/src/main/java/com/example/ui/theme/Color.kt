@@ -29,8 +29,6 @@ val DarkMuted = Color(0xFFA79B85)
 val DarkBorder = Color(0xFF3A3527)
 
 // Accents
-val AccentGold = Color(0xFFB4791F)
-val AccentGoldContainer = Color(0xFFFBF0D9)
 val AccentRed = Color(0xFFB23A32)
 val AccentRedContainer = Color(0xFFF8E4E1)
 

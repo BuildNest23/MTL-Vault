@@ -13,15 +13,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.animateScrollBy
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Dp
 import com.example.tts.SentenceSplitter
@@ -31,7 +27,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,7 +35,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -49,7 +43,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.TextStyle
@@ -69,8 +62,8 @@ import com.example.data.model.ChapterSummary
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -78,7 +71,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -142,13 +134,16 @@ import com.example.ui.theme.ReaderSepiaText
 fun ReaderScreen(
     viewModel: ReaderViewModel,
     onBackClick: () -> Unit,
-    onOpenReplacements: () -> Unit
+    onOpenReplacements: () -> Unit,
+    onOpenVoices: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val chapter by viewModel.currentChapter.collectAsStateWithLifecycle()
     val renderedContent by viewModel.renderedContent.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val ttsInfo by viewModel.ttsPlaybackInfo.collectAsStateWithLifecycle()
+    val sleepTimer by viewModel.ttsSleepTimer.collectAsStateWithLifecycle()
+    val edgeProgress by viewModel.edgeProgress.collectAsStateWithLifecycle()
     val chaptersList by viewModel.chaptersList.collectAsStateWithLifecycle()
     val initialParagraphIndex by viewModel.initialParagraphIndex.collectAsStateWithLifecycle()
 
@@ -186,7 +181,6 @@ fun ReaderScreen(
         viewModel.events.collect { event ->
             when (event) {
                 is ReaderEvent.ShowToast -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
-                is ReaderEvent.NavigateToChapter -> viewModel.loadChapter(event.chapterId)
             }
         }
     }
@@ -384,6 +378,11 @@ fun ReaderScreen(
         onDispose { activityOwner?.lifecycle?.removeObserver(observer) }
     }
 
+    // Rough "time left" for the player; recalculated whenever the spoken paragraph or speed changes
+    val remainingSeconds = remember(ttsInfo.currentChunkIndex, ttsInfo.totalChunks, ttsInfo.chapterId, settings.ttsRate) {
+        viewModel.ttsRemainingSeconds()
+    }
+
     // Determine colors based on reading theme
     val (bgColor, textColor, topBarBg) = when (settings.theme) {
         "sepia" -> Triple(ReaderSepiaBg, ReaderSepiaText, Color(0xFFEFE4C8))
@@ -503,8 +502,10 @@ fun ReaderScreen(
                     controlsVisible = !controlsVisible
                 },
             contentPadding = PaddingValues(
-                horizontal = 20.dp,
-                vertical = 60.dp
+                start = 20.dp,
+                end = 20.dp,
+                top = 60.dp,
+                bottom = 150.dp // keeps the end of the chapter clear of the docked player
             ),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -669,6 +670,17 @@ fun ReaderScreen(
                     }
 
                     IconButton(
+                        onClick = onOpenVoices,
+                        modifier = Modifier.testTag("reader_voices_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.RecordVoiceOver,
+                            contentDescription = "Character voices",
+                            tint = textColor
+                        )
+                    }
+
+                    IconButton(
                         onClick = onOpenReplacements,
                         modifier = Modifier.testTag("reader_replacements_button")
                     ) {
@@ -691,8 +703,50 @@ fun ReaderScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = topBarBg.copy(alpha = 0.95f)
+                    containerColor = topBarBg
                 )
+            )
+        }
+
+        // Floating Compact TTS Control Bar (collapsible or hides with controls)
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            TtsPlayerBar(
+                playbackInfo = ttsInfo,
+                speechRate = settings.ttsRate,
+                speechPitch = settings.ttsPitch,
+                onPlayPause = {
+                    requestNotificationPermissionIfNeeded()
+                    val visiblePara = maxOf(0, lazyListState.firstVisibleItemIndex - 1)
+                    viewModel.toggleTts(visiblePara)
+                },
+                onStop = { viewModel.stopTts() },
+                onPrevChapter = { viewModel.prevChapter() },
+                onNextChapter = { viewModel.nextChapter() },
+                onPrevParagraph = { viewModel.prevParagraph() },
+                onNextParagraph = { viewModel.nextParagraph() },
+                onSeek = { viewModel.seekTtsToParagraph(it) },
+                remainingSeconds = remainingSeconds,
+                sleepTimer = sleepTimer,
+                onSetSleepMinutes = { viewModel.setSleepTimerMinutes(it) },
+                onSetSleepAtChapterEnd = { viewModel.setSleepAtChapterEnd() },
+                onCancelSleep = { viewModel.cancelSleepTimer() },
+                onRateChange = { viewModel.setTtsRate(it) },
+                onPitchChange = { viewModel.setTtsPitch(it) },
+                useEdge = settings.ttsEngine == "edge",
+                edgeVoice = settings.edgeVoice,
+                onUseEdgeChange = { viewModel.setUseEdgeVoices(it) },
+                onEdgeVoiceChange = { viewModel.setEdgeVoice(it) },
+                edgeProgress = edgeProgress,
+                edgeWifiOnly = settings.edgeWifiOnly,
+                onEdgeWifiOnlyChange = { viewModel.setEdgeWifiOnly(it) },
+                onClearEdgeChapter = { viewModel.clearEdgeChapter() },
+                onClearEdgeCache = { viewModel.clearEdgeCache() },
+                loadEdgeCacheSize = { viewModel.edgeCacheSize() }
             )
         }
 
@@ -713,33 +767,6 @@ fun ReaderScreen(
             trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
             strokeCap = StrokeCap.Square
         )
-
-        // Floating Compact TTS Control Bar (collapsible or hides with controls)
-        AnimatedVisibility(
-            visible = controlsVisible,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 12.dp)
-        ) {
-            TtsPlayerBar(
-                playbackInfo = ttsInfo,
-                speechRate = settings.ttsRate,
-                speechPitch = settings.ttsPitch,
-                onPlayPause = {
-                    requestNotificationPermissionIfNeeded()
-                    val visiblePara = maxOf(0, lazyListState.firstVisibleItemIndex - 1)
-                    viewModel.toggleTts(visiblePara)
-                },
-                onStop = { viewModel.stopTts() },
-                onPrevChapter = { viewModel.prevChapter() },
-                onNextChapter = { viewModel.nextChapter() },
-                onRateChange = { viewModel.setTtsRate(it) },
-                onPitchChange = { viewModel.setTtsPitch(it) }
-            )
-        }
     }
     }
 

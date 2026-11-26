@@ -266,7 +266,6 @@ class AddAudiobookViewModel(
         }
     }
 
-    fun dismissError() = _state.update { it.copy(error = null) }
     override fun onCleared() {
         // Leaving the screen without saving gives the folder permission back
         if (!finished) _state.value.draft?.let { discardDraft(it) }

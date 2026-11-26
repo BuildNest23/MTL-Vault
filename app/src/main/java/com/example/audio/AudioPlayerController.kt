@@ -151,10 +151,16 @@ class AudioPlayerController(
 
     /** Loads the files again, for example after a file was re-linked. Keeps the current position. */
     suspend fun reload() {
+        openLock.withLock { reloadInternal() }
+    }
+
+    private suspend fun reloadInternal() {
         val current = book ?: return
         val fileIndex = if (player.mediaItemCount > 0) player.currentMediaItemIndex else current.lastFileIndex
         val position = if (player.mediaItemCount > 0) player.currentPosition else current.lastPositionMs
-        files = repository.getFiles(current.id)
+        val reloadedFiles = repository.getFiles(current.id)
+        files = reloadedFiles
+        spans = ChapterNavigator.spansOf(repository.getChapters(current.id), reloadedFiles)
         error = null
         missingFileName = null
         everReady = false
@@ -236,8 +242,10 @@ class AudioPlayerController(
     /** Stops playback and clears the player. The mini-player disappears. */
     fun close() {
         scope.launch {
-            closeCurrent()
-            _state.value = AudioPlayerUiState()
+            openLock.withLock {
+                closeCurrent()
+                _state.value = AudioPlayerUiState()
+            }
         }
     }
 
@@ -481,7 +489,11 @@ class AudioPlayerController(
         }
 
         override fun onAudioSessionIdChanged(audioSessionId: Int) {
-            enhancer?.release()
+            try {
+                enhancer?.release()
+            } catch (_: Exception) {
+                // ignore if already released
+            }
             enhancer = null
             applyVolumeBoost()
         }
@@ -578,10 +590,15 @@ class AudioPlayerController(
             val remainingInTarget = if (targetSpan != null) ChapterNavigator.remainingInChapter(targetSpan, currentFileIdx, currentPos) else Long.MAX_VALUE
 
             if ((hasAdvancedPastTarget || remainingInTarget <= effectiveMargin) && sleep.chapterEnded()) {
+                sleepTargetChapterIndex = -1
+                // Mute briefly while seeking to the start of the next chapter before pausing so no
+                // audio from the next chapter leaks out and onIsPlayingChanged saves the new spot.
+                player.volume = 0f
+                ChapterNavigator.next(spans, targetIndex)?.let { player.seekTo(it.fileIndex, it.positionMs) }
                 pause()
                 player.volume = 1f
-                sleepTargetChapterIndex = -1
-                ChapterNavigator.next(spans, targetIndex)?.let { player.seekTo(it.fileIndex, it.positionMs) }
+                saveProgressNow()
+                publish()
             }
         }
 

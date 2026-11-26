@@ -2,7 +2,6 @@ package com.example.ui.screens.editor
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,8 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -57,11 +54,13 @@ fun ChapterEditorScreen(
     val title by viewModel.title.collectAsStateWithLifecycle()
     val content by viewModel.content.collectAsStateWithLifecycle()
     val wordCount by viewModel.wordCount.collectAsStateWithLifecycle()
+    val hasUnsavedChanges by viewModel.hasUnsavedChanges.collectAsStateWithLifecycle()
+    val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
 
     var showDiscardDialog by remember { mutableStateOf(false) }
 
     BackHandler {
-        if (content.isNotBlank()) {
+        if (hasUnsavedChanges) {
             showDiscardDialog = true
         } else {
             onBackClick()
@@ -82,11 +81,12 @@ fun ChapterEditorScreen(
             MtlTopBar(
                 title = if (viewModel.chapterId != null) "Edit Chapter" else "New Chapter",
                 onBackClick = {
-                    if (content.isNotBlank()) showDiscardDialog = true else onBackClick()
+                    if (hasUnsavedChanges) showDiscardDialog = true else onBackClick()
                 },
                 actions = {
                     Button(
                         onClick = { viewModel.saveChapter() },
+                        enabled = !isSaving,
                         modifier = Modifier
                             .padding(end = 8.dp)
                             .testTag("editor_save_button"),

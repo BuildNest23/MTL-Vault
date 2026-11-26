@@ -71,6 +71,13 @@ private object CoverCache : LruCache<String, ImageBitmap>(8 * 1024 * 1024) {
     override fun sizeOf(key: String, value: ImageBitmap): Int = value.width * value.height * 4
 }
 
+/** Evicts a saved audiobook cover from memory when its file is replaced or deleted. */
+fun evictAudioCoverCache(address: String?) {
+    if (!address.isNullOrBlank()) {
+        CoverCache.remove(address)
+    }
+}
+
 private fun decodeCover(address: String): ImageBitmap? {
     CoverCache.get(address)?.let { return it }
     return try {

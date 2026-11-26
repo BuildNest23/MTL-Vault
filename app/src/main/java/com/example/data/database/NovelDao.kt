@@ -50,9 +50,6 @@ interface NovelDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNovel(novel: NovelEntity)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertNovels(novels: List<NovelEntity>)
-
     @Update
     suspend fun updateNovel(novel: NovelEntity)
 

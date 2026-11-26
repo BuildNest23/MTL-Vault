@@ -226,6 +226,7 @@ object Mp4ChapterParser {
         // 2. Find that track and read its sample table.
         for (trak in traks) {
             val tkhd = find(moov, trak, "tkhd") ?: continue
+            if (tkhd.dataStart >= tkhd.end) continue
             val idOffset = if (u8(moov, tkhd.dataStart) == 1) 4 + 8 + 8 else 4 + 4 + 4
             if (tkhd.dataStart + idOffset + 4 > tkhd.end) continue
             val trackId = u32(moov, tkhd.dataStart + idOffset)
@@ -241,6 +242,7 @@ object Mp4ChapterParser {
         val mdia = find(moov, trak, "mdia") ?: return emptyList()
 
         val mdhd = find(moov, mdia, "mdhd") ?: return emptyList()
+        if (mdhd.dataStart >= mdhd.end) return emptyList()
         val timescaleOffset = if (u8(moov, mdhd.dataStart) == 1) 4 + 8 + 8 else 4 + 4 + 4
         if (mdhd.dataStart + timescaleOffset + 4 > mdhd.end) return emptyList()
         val timescale = u32(moov, mdhd.dataStart + timescaleOffset)
@@ -252,11 +254,13 @@ object Mp4ChapterParser {
 
         // ---- stts: how long each sample lasts
         val stts = find(moov, stblBoxes, "stts") ?: return emptyList()
+        if (stts.dataStart + 8 > stts.end) return emptyList()
         val sttsCount = u32(moov, stts.dataStart + 4).toInt()
         if (sttsCount < 0 || stts.dataStart + 8 + sttsCount.toLong() * 8 > stts.end) return emptyList()
 
         // ---- stsz: how big each sample is
         val stsz = find(moov, stblBoxes, "stsz") ?: return emptyList()
+        if (stsz.dataStart + 12 > stsz.end) return emptyList()
         val fixedSize = u32(moov, stsz.dataStart + 4)
         val sampleCount = u32(moov, stsz.dataStart + 8).toInt()
         if (sampleCount <= 0 || sampleCount > MAX_CHAPTERS) return emptyList()
@@ -264,6 +268,7 @@ object Mp4ChapterParser {
 
         // ---- stsc: how many samples sit in each chunk
         val stsc = find(moov, stblBoxes, "stsc") ?: return emptyList()
+        if (stsc.dataStart + 8 > stsc.end) return emptyList()
         val stscCount = u32(moov, stsc.dataStart + 4).toInt()
         if (stscCount <= 0 || stsc.dataStart + 8 + stscCount.toLong() * 12 > stsc.end) return emptyList()
 
@@ -271,6 +276,7 @@ object Mp4ChapterParser {
         val stco = find(moov, stblBoxes, "stco")
         val co64 = find(moov, stblBoxes, "co64")
         val chunkBox = stco ?: co64 ?: return emptyList()
+        if (chunkBox.dataStart + 8 > chunkBox.end) return emptyList()
         val is64 = stco == null
         val chunkCount = u32(moov, chunkBox.dataStart + 4).toInt()
         val entrySize = if (is64) 8 else 4

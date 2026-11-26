@@ -331,9 +331,6 @@ class AudioImporter(context: Context) {
         }
     }
 
-    /** Cancels an import that was scanned but not saved. */
-    fun discard(draft: ImportDraft) = releasePermissions(draft.sourceTreeUri, draft.files.map { it.uri })
-
     /** Deletes the cover saved for a book. Call this when a book is removed. */
     fun deleteCover(bookId: String) = reader.deleteCover(bookId)
 }

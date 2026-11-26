@@ -1,7 +1,6 @@
 package com.example.data.database
 
 import androidx.room.Dao
-import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -20,9 +19,6 @@ interface ChapterDao {
         ORDER BY orderIndex ASC
     """)
     fun getChapterSummaries(novelId: String): Flow<List<ChapterSummary>>
-
-    @Query("SELECT * FROM chapters WHERE novelId = :novelId ORDER BY orderIndex ASC")
-    fun getChaptersForNovel(novelId: String): Flow<List<ChapterEntity>>
 
     @Query("SELECT * FROM chapters WHERE novelId = :novelId ORDER BY orderIndex ASC")
     suspend fun getChaptersForNovelSync(novelId: String): List<ChapterEntity>
@@ -57,15 +53,24 @@ interface ChapterDao {
     @Update
     suspend fun updateChapter(chapter: ChapterEntity)
 
+    /** Text of every chapter that contains an "@" (so it may hold speaker tags), in reading order. */
+    @Query("SELECT content FROM chapters WHERE novelId = :novelId AND content LIKE '%@%' ORDER BY orderIndex")
+    suspend fun getTaggedChapterContents(novelId: String): List<String>
+
+    /** Saves only the text fields, so reading progress that changed meanwhile is never overwritten. */
+    @Query("UPDATE chapters SET title = :title, content = :content, wordCount = :wordCount, updatedAt = :updatedAt WHERE id = :chapterId")
+    suspend fun updateChapterText(chapterId: String, title: String, content: String, wordCount: Int, updatedAt: Long)
+
+    /** Lowest chapter position among the given ids (null when none exist). */
+    @Query("SELECT MIN(orderIndex) FROM chapters WHERE id IN (:ids)")
+    suspend fun getMinOrderIndexForIds(ids: List<String>): Int?
+
     @Query("UPDATE chapters SET read = :read, readAt = :readAt WHERE id = :chapterId")
     suspend fun updateReadStatus(chapterId: String, read: Boolean, readAt: Long?)
 
     /** Marks every chapter of a novel read or unread in one go. */
     @Query("UPDATE chapters SET read = :read, readAt = :readAt WHERE novelId = :novelId")
     suspend fun updateReadStatusForNovel(novelId: String, read: Boolean, readAt: Long?)
-
-    @Query("UPDATE chapters SET scrollPosition = :position WHERE id = :chapterId")
-    suspend fun updateScrollPosition(chapterId: String, position: Int)
 
     @Query("UPDATE chapters SET readingParagraphIndex = :paragraphIndex, scrollPosition = :scrollY WHERE id = :chapterId")
     suspend fun updateReadingPosition(chapterId: String, paragraphIndex: Int, scrollY: Int)
@@ -97,12 +102,4 @@ interface ChapterDao {
     @Query("SELECT COALESCE(SUM(wordCount), 0) FROM chapters")
     fun getTotalWordCount(): Flow<Long>
 
-    @Query("SELECT COUNT(*) FROM chapters WHERE novelId = :novelId")
-    suspend fun getChapterCountForNovel(novelId: String): Int
-
-    @Query("SELECT COUNT(*) FROM chapters WHERE novelId = :novelId AND read = 1")
-    suspend fun getReadChapterCountForNovel(novelId: String): Int
-
-    @Query("SELECT COALESCE(SUM(wordCount), 0) FROM chapters WHERE novelId = :novelId")
-    suspend fun getWordCountForNovel(novelId: String): Long
 }

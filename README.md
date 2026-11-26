@@ -41,6 +41,7 @@ Get the latest installable APK from the **(littlevase/MTL-Vault)** page.
 
 ### Text-to-speech
 - Uses your phone's own Android text-to-speech engine and voices.
+- **Optional Edge neural voices:** turn on *Edge neural voices* in Settings to read with Microsoft's natural-sounding Edge voices. No API key, account or setup. It needs internet; sentences are cached on the phone, and if the connection fails the app switches to your phone's voice automatically.
 - Reads long chapters smoothly by splitting them into paragraphs and sentences, and highlights the part being read.
 - Continues automatically into the next chapter.
 - Adjustable speed (0.5x to 2.5x) and pitch.
@@ -65,3 +66,9 @@ Get the latest installable APK from the **(littlevase/MTL-Vault)** page.
 
 ### Diagnostics
 - Optional detailed log you can share or save to a file when something goes wrong.
+
+---
+
+## Credits
+
+The Edge voice support is a Kotlin/Java port of the Edge TTS protocol from [pagina_reader](https://github.com/teriadar/pagina_reader) (GPL-3.0), which in turn is based on the Python [edge-tts](https://github.com/rany2/edge-tts) package by rany2.

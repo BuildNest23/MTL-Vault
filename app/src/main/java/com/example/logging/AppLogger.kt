@@ -2,7 +2,6 @@ package com.example.logging
 
 import android.app.ActivityManager
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
@@ -31,7 +30,11 @@ object AppLogger {
     @Volatile
     var isDetailedLogging: Boolean = false
 
+    @Volatile
+    var voiceCountProvider: (() -> Int?)? = null
+
     private val memoryLog = ArrayDeque<String>(MAX_MEMORY_LINES)
+    private val fileLock = Any()
     private val logChannel = Channel<String>(capacity = 2000)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -106,18 +109,20 @@ object AppLogger {
     }
 
     private fun writeEntryToFile(entry: String) {
-        try {
-            val file = currentLogFile ?: return
-            val oldFile = oldLogFile ?: File(file.parentFile, "app_log_old.txt")
+        synchronized(fileLock) {
+            try {
+                val file = currentLogFile ?: return
+                val oldFile = oldLogFile ?: File(file.parentFile, "app_log_old.txt")
 
-            rotateIfNeeded(file, oldFile, MAX_LOG_SIZE_BYTES)
+                rotateIfNeeded(file, oldFile, MAX_LOG_SIZE_BYTES)
 
-            FileWriter(file, true).use { writer ->
-                writer.appendLine(entry)
-                writer.flush()
+                FileWriter(file, true).use { writer ->
+                    writer.appendLine(entry)
+                    writer.flush()
+                }
+            } catch (t: Throwable) {
+                Log.e("AppLogger", "Failed to write log entry to disk", t)
             }
-        } catch (t: Throwable) {
-            Log.e("AppLogger", "Failed to write log entry to disk", t)
         }
     }
 
@@ -167,35 +172,37 @@ object AppLogger {
     }
 
     private fun writeSynchronousCrashLog(thread: Thread, throwable: Throwable) {
-        try {
-            val file = currentLogFile ?: return
-            val oldFile = oldLogFile ?: File(file.parentFile, "app_log_old.txt")
+        synchronized(fileLock) {
+            try {
+                val file = currentLogFile ?: return
+                val oldFile = oldLogFile ?: File(file.parentFile, "app_log_old.txt")
 
-            rotateIfNeeded(file, oldFile, MAX_LOG_SIZE_BYTES)
+                rotateIfNeeded(file, oldFile, MAX_LOG_SIZE_BYTES)
 
-            val recentLines: List<String>
-            synchronized(memoryLog) {
-                val list = memoryLog.toList()
-                recentLines = list.takeLast(CRASH_MEMORY_LINES)
-            }
-
-            val timestamp = synchronized(dateFormat) { dateFormat.format(Date()) }
-            val stackTrace = getStackTraceString(throwable)
-
-            FileWriter(file, true).use { writer ->
-                writer.appendLine("\n==================== UNCAUGHT CRASH ====================")
-                writer.appendLine("Timestamp: $timestamp")
-                writer.appendLine("Thread: ${thread.name} (id: ${thread.id})")
-                writer.appendLine("Exception: $stackTrace")
-                writer.appendLine("--- Last ${recentLines.size} Log Entries ---")
-                for (line in recentLines) {
-                    writer.appendLine(line)
+                val recentLines: List<String>
+                synchronized(memoryLog) {
+                    val list = memoryLog.toList()
+                    recentLines = list.takeLast(CRASH_MEMORY_LINES)
                 }
-                writer.appendLine("================== END UNCAUGHT CRASH ==================\n")
-                writer.flush()
+
+                val timestamp = synchronized(dateFormat) { dateFormat.format(Date()) }
+                val stackTrace = getStackTraceString(throwable)
+
+                FileWriter(file, true).use { writer ->
+                    writer.appendLine("\n==================== UNCAUGHT CRASH ====================")
+                    writer.appendLine("Timestamp: $timestamp")
+                    writer.appendLine("Thread: ${thread.name} (id: ${thread.id})")
+                    writer.appendLine("Exception: $stackTrace")
+                    writer.appendLine("--- Last ${recentLines.size} Log Entries ---")
+                    for (line in recentLines) {
+                        writer.appendLine(line)
+                    }
+                    writer.appendLine("================== END UNCAUGHT CRASH ==================\n")
+                    writer.flush()
+                }
+            } catch (t: Throwable) {
+                Log.e("AppLogger", "Error writing synchronous crash log", t)
             }
-        } catch (t: Throwable) {
-            Log.e("AppLogger", "Error writing synchronous crash log", t)
         }
     }
 
@@ -290,16 +297,18 @@ object AppLogger {
     }
 
     fun getLogSizeBytes(context: Context): Long {
-        return try {
-            val dir = logsDir ?: File(context.filesDir, "logs")
-            val current = File(dir, "app_log.txt")
-            val old = File(dir, "app_log_old.txt")
-            var size = 0L
-            if (current.exists()) size += current.length()
-            if (old.exists()) size += old.length()
-            size
-        } catch (t: Throwable) {
-            0L
+        return synchronized(fileLock) {
+            try {
+                val dir = logsDir ?: File(context.filesDir, "logs")
+                val current = File(dir, "app_log.txt")
+                val old = File(dir, "app_log_old.txt")
+                var size = 0L
+                if (current.exists()) size += current.length()
+                if (old.exists()) size += old.length()
+                size
+            } catch (t: Throwable) {
+                0L
+            }
         }
     }
 
@@ -314,20 +323,29 @@ object AppLogger {
     }
 
     fun clearLogs(context: Context): Boolean {
-        return try {
-            clearMemoryEntries()
-            val dir = logsDir ?: File(context.filesDir, "logs")
-            val current = File(dir, "app_log.txt")
-            val old = File(dir, "app_log_old.txt")
-            if (current.exists()) current.delete()
-            if (old.exists()) old.delete()
-            current.createNewFile()
-            i("AppLogger", "Logs cleared by user")
-            true
-        } catch (t: Throwable) {
-            Log.e("AppLogger", "Failed to clear logs", t)
-            false
+        val cleared = synchronized(fileLock) {
+            try {
+                while (logChannel.tryReceive().isSuccess) {
+                    // Discard entries queued before clearing so they aren't written afterwards
+                }
+                clearMemoryEntries()
+                val dir = logsDir ?: File(context.filesDir, "logs")
+                if (!dir.exists()) dir.mkdirs()
+                val current = File(dir, "app_log.txt")
+                val old = File(dir, "app_log_old.txt")
+                if (current.exists()) current.delete()
+                if (old.exists()) old.delete()
+                current.createNewFile()
+                true
+            } catch (t: Throwable) {
+                Log.e("AppLogger", "Failed to clear logs", t)
+                false
+            }
         }
+        if (cleared) {
+            i("AppLogger", "Logs cleared by user")
+        }
+        return cleared
     }
 
     fun buildHeader(context: Context, readerSettings: ReaderSettings? = null, voiceCount: Int? = null): String {
@@ -359,7 +377,12 @@ object AppLogger {
                 "unavailable"
             }
 
-            val installedVoices = voiceCount ?: getInstalledVoiceCount()
+            val resolvedVoiceCount = voiceCount ?: try {
+                voiceCountProvider?.invoke()
+            } catch (_: Throwable) {
+                null
+            }
+            val installedVoices = resolvedVoiceCount?.toString() ?: "N/A"
 
             val settingsDesc = readerSettings?.let {
                 "theme=${it.theme}, fontSize=${it.fontSize}, lineHeight=${it.lineHeight}, font=${it.fontFamily}, ttsRate=${it.ttsRate}, ttsPitch=${it.ttsPitch}, detailedLogging=${it.detailedLogging}"
@@ -384,17 +407,6 @@ object AppLogger {
         }
     }
 
-    private fun getInstalledVoiceCount(): String {
-        return try {
-            val tts = android.speech.tts.TextToSpeech(null, null)
-            val count = tts.voices?.size ?: 0
-            tts.shutdown()
-            count.toString()
-        } catch (_: Throwable) {
-            "N/A"
-        }
-    }
-
     fun buildFullExportText(context: Context, readerSettings: ReaderSettings? = null): String {
         val sb = StringBuilder()
         val header = buildHeader(context, readerSettings)
@@ -404,30 +416,32 @@ object AppLogger {
         val oldFile = File(dir, "app_log_old.txt")
         val currentFile = File(dir, "app_log.txt")
 
-        if (oldFile.exists() && oldFile.length() > 0) {
-            sb.append("--- PREVIOUS LOG (app_log_old.txt) ---\n")
-            try {
-                sb.append(oldFile.readText(Charsets.UTF_8))
-                sb.append("\n\n")
-            } catch (t: Throwable) {
-                sb.append("[Error reading old log: ${t.message}]\n\n")
+        synchronized(fileLock) {
+            if (oldFile.exists() && oldFile.length() > 0) {
+                sb.append("--- PREVIOUS LOG (app_log_old.txt) ---\n")
+                try {
+                    sb.append(oldFile.readText(Charsets.UTF_8))
+                    sb.append("\n\n")
+                } catch (t: Throwable) {
+                    sb.append("[Error reading old log: ${t.message}]\n\n")
+                }
             }
-        }
 
-        if (currentFile.exists() && currentFile.length() > 0) {
-            sb.append("--- CURRENT LOG (app_log.txt) ---\n")
-            try {
-                sb.append(currentFile.readText(Charsets.UTF_8))
-                sb.append("\n")
-            } catch (t: Throwable) {
-                sb.append("[Error reading current log: ${t.message}]\n")
-            }
-        } else {
-            // Fallback to in-memory entries if file is empty or not yet flushed
-            sb.append("--- CURRENT IN-MEMORY LOG ---\n")
-            val memory = getMemoryEntries()
-            for (line in memory) {
-                sb.append(line).append("\n")
+            if (currentFile.exists() && currentFile.length() > 0) {
+                sb.append("--- CURRENT LOG (app_log.txt) ---\n")
+                try {
+                    sb.append(currentFile.readText(Charsets.UTF_8))
+                    sb.append("\n")
+                } catch (t: Throwable) {
+                    sb.append("[Error reading current log: ${t.message}]\n")
+                }
+            } else {
+                // Fallback to in-memory entries if file is empty or not yet flushed
+                sb.append("--- CURRENT IN-MEMORY LOG ---\n")
+                val memory = getMemoryEntries()
+                for (line in memory) {
+                    sb.append(line).append("\n")
+                }
             }
         }
 

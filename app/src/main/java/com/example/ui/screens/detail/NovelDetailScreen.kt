@@ -1,6 +1,15 @@
 package com.example.ui.screens.detail
 
 import android.widget.Toast
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.compose.foundation.Image
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,8 +36,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Book
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -37,11 +44,8 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -67,6 +71,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
@@ -97,6 +102,7 @@ fun NovelDetailScreen(
     onPlayNovel: (String) -> Unit,
     onOpenEditor: (String?) -> Unit,
     onOpenReplacements: () -> Unit,
+    onOpenVoices: () -> Unit = {},
     ttsInfo: com.example.tts.TtsPlaybackInfo = com.example.tts.TtsPlaybackInfo()
 ) {
     val context = LocalContext.current
@@ -147,9 +153,6 @@ fun NovelDetailScreen(
             when (event) {
                 is DetailEvent.ShowToast -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
                 is DetailEvent.NovelDeleted -> onBackClick()
-                is DetailEvent.OpenReader -> onOpenReader(event.chapterId)
-                is DetailEvent.OpenEditor -> onOpenEditor(event.chapterId)
-                is DetailEvent.OpenReplacements -> onOpenReplacements()
             }
         }
     }
@@ -170,17 +173,28 @@ fun NovelDetailScreen(
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit Novel Info")
                     }
-                    IconButton(
-                        onClick = onOpenReplacements,
-                        modifier = Modifier.testTag("detail_replacements_button")
-                    ) {
-                        Icon(Icons.Default.SwapHoriz, contentDescription = "Replacements")
-                    }
-                    IconButton(
-                        onClick = { showDeleteNovelDialog = true },
-                        modifier = Modifier.testTag("detail_delete_novel_button")
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete Novel", tint = MaterialTheme.colorScheme.error)
+                    // Delete lives in a menu so it can't be tapped by accident next to Edit
+                    var novelMenuOpen by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(
+                            onClick = { novelMenuOpen = true },
+                            modifier = Modifier.testTag("detail_novel_menu_button")
+                        ) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                        }
+                        DropdownMenu(
+                            expanded = novelMenuOpen,
+                            onDismissRequest = { novelMenuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Delete novel", color = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    novelMenuOpen = false
+                                    showDeleteNovelDialog = true
+                                },
+                                modifier = Modifier.testTag("detail_delete_novel_button")
+                            )
+                        }
                     }
                 }
             )
@@ -199,10 +213,12 @@ fun NovelDetailScreen(
         }
 
         val totalChapters = chapters.size
-        val readChapters = chapters.count { it.read }
-        val totalWords = chapters.sumOf { it.wordCount.toLong() }
+        val readChapters = remember(chapters) { chapters.count { it.read } }
+        val totalWords = remember(chapters) { chapters.sumOf { it.wordCount.toLong() } }
         val progressPercent = if (totalChapters > 0) (readChapters * 100) / totalChapters else 0
-        val rulesCount = ReplacementEngine.parseRules(currentNovel.replacements).size
+        val rulesCount = remember(currentNovel.replacements) {
+            ReplacementEngine.parseRules(currentNovel.replacements).size
+        }
 
         val lazyListState = rememberLazyListState()
 
@@ -248,12 +264,46 @@ fun NovelDetailScreen(
                                     .background(MaterialTheme.colorScheme.primaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Book,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(40.dp)
-                                )
+                                val coverBitmap by produceState<ImageBitmap?>(initialValue = null, currentNovel.coverUri) {
+                                    val uriString = currentNovel.coverUri?.takeIf { it.isNotBlank() }
+                                    value = if (uriString == null) {
+                                        null
+                                    } else {
+                                        withContext(Dispatchers.IO) {
+                                            try {
+                                                val uri = Uri.parse(uriString)
+                                                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                                context.contentResolver.openInputStream(uri)?.use {
+                                                    BitmapFactory.decodeStream(it, null, bounds)
+                                                }
+                                                var sample = 1
+                                                while (bounds.outWidth / (sample * 2) >= 480) sample *= 2
+                                                val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                                                context.contentResolver.openInputStream(uri)?.use {
+                                                    BitmapFactory.decodeStream(it, null, opts)
+                                                }?.asImageBitmap()
+                                            } catch (e: Exception) {
+                                                null
+                                            }
+                                        }
+                                    }
+                                }
+                                val loadedCover = coverBitmap
+                                if (loadedCover != null) {
+                                    Image(
+                                        bitmap = loadedCover,
+                                        contentDescription = currentNovel.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Book,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(40.dp)
+                                    )
+                                }
                             }
 
                             Spacer(modifier = Modifier.width(14.dp))
@@ -332,8 +382,26 @@ fun NovelDetailScreen(
                             } ?: chapters.firstOrNull()
                         }
 
+                        // Say where Play will start (real chapter title, shortened so it never looks awkward)
+                        val playLabel = if (targetChapter == null) {
+                            "Play"
+                        } else {
+                            val anyRead = chapters.any { it.read }
+                            val resuming = !targetChapter.read && targetChapter.readingParagraphIndex > 0
+                            val maxTitle = 26
+                            val rawTitle = targetChapter.title.trim()
+                            val shortTitle = if (rawTitle.length > maxTitle) {
+                                rawTitle.take(maxTitle - 1).trimEnd() + "\u2026"
+                            } else rawTitle
+                            when {
+                                resuming -> "Continue \u00B7 $shortTitle"
+                                currentNovel.lastChapterId.isNullOrBlank() && !anyRead -> "Start \u00B7 $shortTitle"
+                                else -> "Play \u00B7 $shortTitle"
+                            }
+                        }
+
                         MtlActionButton(
-                            text = "Play",
+                            text = playLabel,
                             icon = Icons.Default.PlayArrow,
                             onClick = {
                                 if (targetChapter != null) {
@@ -411,6 +479,18 @@ fun NovelDetailScreen(
                                     .testTag("detail_export_novel_button")
                             )
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        MtlActionButton(
+                            text = "Character voices",
+                            icon = Icons.Default.RecordVoiceOver,
+                            onClick = onOpenVoices,
+                            style = MtlButtonStyle.Subtle,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("detail_open_voices_button")
+                        )
                     }
                 }
             }
@@ -678,10 +758,11 @@ fun NovelDetailScreen(
                             ),
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isSelected) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.surface
+                            containerColor = when {
+                                isSelected -> MaterialTheme.colorScheme.primaryContainer
+                                // the chapter you're in the middle of gets a soft tint
+                                isCurrent && !ch.read -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                                else -> MaterialTheme.colorScheme.surface
                             }
                         ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp)
@@ -689,6 +770,7 @@ fun NovelDetailScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .alpha(if (ch.read && !isCurrent && !isSpeaking && !isSelected) 0.6f else 1f)
                                 .padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -743,7 +825,21 @@ fun NovelDetailScreen(
                                         modifier = Modifier.weight(1f, fill = false)
                                     )
 
-                                    if (isCurrent) {
+                                    if (isCurrent && !ch.read) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = MaterialTheme.colorScheme.primary
+                                        ) {
+                                            Text(
+                                                text = "Reading",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onPrimary,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    } else if (isCurrent) {
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Box(
                                             modifier = Modifier
@@ -773,49 +869,68 @@ fun NovelDetailScreen(
                                 Spacer(modifier = Modifier.height(2.dp))
 
                                 val readMin = maxOf(1, ch.wordCount / 180)
+                                val readingPrefix = if (isCurrent && !ch.read && ch.readingParagraphIndex > 0) {
+                                    "Paragraph ${ch.readingParagraphIndex + 1} • "
+                                } else ""
                                 Text(
-                                    text = "${String.format("%,d", ch.wordCount)} words • ~$readMin min read",
+                                    text = if (readingPrefix.isNotEmpty()) {
+                                        "$readingPrefix${String.format("%,d", ch.wordCount)} words • ~$readMin min"
+                                    } else {
+                                        "${String.format("%,d", ch.wordCount)} words • ~$readMin min read"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
 
-                            // Quick chapter actions
+                            // Chapter actions live in one menu (keeps rows calm and Delete away from the others)
                             if (!isSelectionMode) {
-                                IconButton(
-                                    onClick = { viewModel.toggleChapterRead(ch.id) },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (ch.read) Icons.Filled.CheckCircle else Icons.Outlined.CheckCircle,
-                                        contentDescription = "Toggle Read Status",
-                                        tint = if (ch.read) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = { onOpenEditor(ch.id) },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Edit Chapter",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = { chapterToDeleteId = ch.id },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Delete Chapter",
-                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                var rowMenuOpen by remember { mutableStateOf(false) }
+                                Box {
+                                    IconButton(
+                                        onClick = { rowMenuOpen = true },
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .testTag("chapter_row_menu_${ch.id}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.MoreVert,
+                                            contentDescription = "Chapter actions",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = rowMenuOpen,
+                                        onDismissRequest = { rowMenuOpen = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(if (ch.read) "Mark as unread" else "Mark as read") },
+                                            onClick = {
+                                                rowMenuOpen = false
+                                                viewModel.toggleChapterRead(ch.id)
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Edit chapter") },
+                                            onClick = {
+                                                rowMenuOpen = false
+                                                onOpenEditor(ch.id)
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    "Delete chapter",
+                                                    color = MaterialTheme.colorScheme.error
+                                                )
+                                            },
+                                            onClick = {
+                                                rowMenuOpen = false
+                                                chapterToDeleteId = ch.id
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -838,7 +953,7 @@ fun NovelDetailScreen(
             isDestructive = true,
             onConfirm = {
                 showDeleteNovelDialog = false
-                viewModel.deleteNovel()
+                viewModel.deleteNovel(context)
             },
             onDismiss = { showDeleteNovelDialog = false }
         )
@@ -918,8 +1033,9 @@ fun NovelDetailScreen(
     }
 
     pendingImportText?.let { rawText ->
+        val importWordCount = remember(rawText) { ChapterSplitter.countWords(rawText) }
         ChapterSplitDialog(
-            totalWords = ChapterSplitter.countWords(rawText),
+            totalWords = importWordCount,
             onSelectSplitMode = { mode, customMarker ->
                 viewModel.completeImport(mode, customMarker)
             },

@@ -1,17 +1,17 @@
 package com.example.ui.screens.library
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.CoverStorage
 import com.example.data.model.NovelSummary
 import com.example.data.remote.AniListClient
 import com.example.data.repository.NovelRepository
 import com.example.importexport.ChapterSplitter
 import com.example.importexport.EpubParser
+import com.example.tts.VoiceCastStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,8 +25,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.BufferedReader
-import java.io.InputStreamReader
 
 sealed class LibraryEvent {
     data class ShowToast(val message: String) : LibraryEvent()
@@ -161,12 +159,15 @@ class LibraryViewModel(
         }
     }
 
-    /** Deletes a novel with all its chapters, and the cover file the app saved for it. */
+    /** Deletes a novel with all its chapters, its saved cover file, and its saved voice cast. */
     fun deleteNovel(context: Context, novel: NovelSummary) {
         val appContext = context.applicationContext
         viewModelScope.launch {
             repository.deleteNovel(novel.id)
-            withContext(Dispatchers.IO) { deleteOwnCover(appContext, novel.coverUri) }
+            withContext(Dispatchers.IO) {
+                CoverStorage.deleteOwnCover(appContext, novel.coverUri)
+                VoiceCastStore(appContext).delete(novel.id)
+            }
             _events.emit(LibraryEvent.ShowToast("\"${novel.title}\" deleted."))
         }
     }
@@ -193,15 +194,17 @@ class LibraryViewModel(
             var coverProblem = false
 
             if (newCover != null) {
-                val saved = withContext(Dispatchers.IO) { copyCoverIntoApp(appContext, novelId, newCover) }
+                val saved = withContext(Dispatchers.IO) {
+                    CoverStorage.copyCoverIntoApp(appContext, novelId, newCover)
+                }
                 if (saved != null) {
-                    withContext(Dispatchers.IO) { deleteOwnCover(appContext, current.coverUri) }
+                    withContext(Dispatchers.IO) { CoverStorage.deleteOwnCover(appContext, current.coverUri) }
                     coverUri = saved
                 } else {
                     coverProblem = true
                 }
             } else if (removeCover) {
-                withContext(Dispatchers.IO) { deleteOwnCover(appContext, current.coverUri) }
+                withContext(Dispatchers.IO) { CoverStorage.deleteOwnCover(appContext, current.coverUri) }
                 coverUri = null
             }
 
@@ -219,57 +222,6 @@ class LibraryViewModel(
                     if (coverProblem) "Saved, but that image couldn't be read." else "Novel updated."
                 )
             )
-        }
-    }
-
-    /** Copies a picked picture into the app's covers folder. Returns the new file address, or null if it can't be read. */
-    private fun copyCoverIntoApp(context: Context, novelId: String, source: Uri): String? {
-        return try {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            context.contentResolver.openInputStream(source)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-            var sample = 1
-            while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 1000) sample *= 2
-            val options = BitmapFactory.Options().apply { inSampleSize = sample }
-            val decoded = context.contentResolver.openInputStream(source)?.use {
-                BitmapFactory.decodeStream(it, null, options)
-            } ?: return null
-
-            val longest = maxOf(decoded.width, decoded.height)
-            val bitmap = if (longest > 1000) {
-                val scale = 1000f / longest
-                Bitmap.createScaledBitmap(
-                    decoded,
-                    (decoded.width * scale).toInt().coerceAtLeast(1),
-                    (decoded.height * scale).toInt().coerceAtLeast(1),
-                    true
-                )
-            } else {
-                decoded
-            }
-
-            val file = File(context.filesDir, "covers/${novelId}_${System.currentTimeMillis()}.jpg")
-            file.parentFile?.mkdirs()
-            file.outputStream().use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out) }
-            if (file.length() > 0L) Uri.fromFile(file).toString() else null
-        } catch (e: Exception) {
-            null
-        } catch (e: OutOfMemoryError) {
-            null
-        }
-    }
-
-    /** Deletes a cover file the app saved itself. Pictures that live elsewhere are never touched. */
-    private fun deleteOwnCover(context: Context, coverUri: String?) {
-        if (coverUri.isNullOrBlank()) return
-        try {
-            val path = Uri.parse(coverUri).path ?: return
-            val file = File(path)
-            val coversDir = File(context.filesDir, "covers")
-            if (file.exists() && file.parentFile?.canonicalPath == coversDir.canonicalPath) file.delete()
-        } catch (e: Exception) {
-            // The old file stays. That only wastes a little space.
         }
     }
 

@@ -56,9 +56,6 @@ abstract class AudioDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun insertBook(book: AudioBookEntity)
 
-    @Update
-    abstract suspend fun updateBook(book: AudioBookEntity)
-
     @Query("DELETE FROM audio_books WHERE id = :id")
     abstract suspend fun deleteBook(id: String)
 
@@ -131,9 +128,6 @@ abstract class AudioDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun insertFiles(files: List<AudioFileEntity>)
 
-    @Query("DELETE FROM audio_files WHERE bookId = :bookId")
-    abstract suspend fun deleteFilesForBook(bookId: String)
-
     /** Used by Re-link when a file was moved: point the row at the new location. */
     @Query("UPDATE audio_files SET uri = :uri, sizeBytes = :sizeBytes WHERE id = :fileId")
     abstract suspend fun updateFileUri(fileId: String, uri: String, sizeBytes: Long)
@@ -189,9 +183,6 @@ abstract class AudioDao {
     /** Every day-row, newest first. The table only grows by one row per book per day, so it stays small. */
     @Query("SELECT * FROM audio_listening ORDER BY dayEpoch DESC")
     abstract fun observeListening(): Flow<List<AudioListeningEntity>>
-
-    @Query("SELECT * FROM audio_listening WHERE dayEpoch >= :fromDayEpoch ORDER BY dayEpoch ASC")
-    abstract fun observeListeningSince(fromDayEpoch: Long): Flow<List<AudioListeningEntity>>
 
     @Query(
         """

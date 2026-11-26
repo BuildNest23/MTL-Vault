@@ -1,7 +1,5 @@
 package com.example.ui.screens.reader
 
-import android.content.Context
-import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.entities.ChapterEntity
@@ -11,6 +9,7 @@ import com.example.data.model.ReaderSettings
 import com.example.data.preferences.SettingsDataStore
 import com.example.data.repository.NovelRepository
 import com.example.tts.TtsManager
+import com.example.tts.edge.EdgeProgress
 import com.example.tts.TtsPlaybackInfo
 import com.example.tts.TtsHighlightState
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -27,10 +26,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed class ReaderEvent {
     data class ShowToast(val message: String) : ReaderEvent()
-    data class NavigateToChapter(val chapterId: String) : ReaderEvent()
 }
 
 class ReaderViewModel(
@@ -64,6 +63,7 @@ class ReaderViewModel(
 
     val ttsPlaybackInfo: StateFlow<TtsPlaybackInfo> = ttsManager.playbackInfo
     val ttsHighlightState: StateFlow<TtsHighlightState> = ttsManager.highlightState
+    val edgeProgress: StateFlow<EdgeProgress> = ttsManager.edgeProgress
 
     private val _events = MutableSharedFlow<ReaderEvent>()
     val events: SharedFlow<ReaderEvent> = _events.asSharedFlow()
@@ -100,22 +100,12 @@ class ReaderViewModel(
 
     private var loadChapterJob: Job? = null
 
-    // True when the rules changed while TTS was reading this chapter; applied as soon as TTS stops.
-    private var pendingRefresh = false
-
     init {
         loadChapter(initialChapterId)
         ttsManager.onNextChapterRequested = onNextRequested
         ttsManager.onPrevChapterRequested = onPrevRequested
         if (ttsManager.isPlayingChapter(novelId, initialChapterId)) {
             ttsManager.onChapterCompleteCallback = onTtsChapterComplete
-        }
-
-        // If a rule change was held back because TTS was reading, apply it once TTS stops.
-        viewModelScope.launch {
-            ttsManager.playbackInfo.collect {
-                if (pendingRefresh) refreshRenderedContent()
-            }
         }
 
         // When the novel's rules change (e.g. edited on the Rules screen), re-render the open chapter.
@@ -127,17 +117,6 @@ class ReaderViewModel(
                     if (lastRulesKey != null && lastRulesKey != key) refreshRenderedContent()
                     lastRulesKey = key
                 }
-            }
-        }
-
-        viewModelScope.launch {
-            var previousSplitMode: String? = null
-            settingsDataStore.settingsFlow.collect { newSettings ->
-                val currentMode = newSettings.splitLongParagraphs
-                if (previousSplitMode != null && previousSplitMode != currentMode) {
-                    onSplitModeChanged(previousSplitMode!!, currentMode)
-                }
-                previousSplitMode = currentMode
             }
         }
     }
@@ -223,19 +202,25 @@ class ReaderViewModel(
         }
     }
 
-    /** Re-renders the open chapter with the latest rules. Skipped while TTS is reading it, so the
-     *  spoken text and the highlighted paragraphs never get out of step. */
+    /**
+     * Re-renders the open chapter with the latest rules and shows it straight away. When TTS is
+     * reading (or paused on) this chapter, the speech is restarted on the same paragraph with the
+     * new text, and stays paused if it was paused, so what is heard matches what is shown.
+     */
     private suspend fun refreshRenderedContent() {
         val chapter = _currentChapter.value ?: return
+        val rendered = repository.getRenderedChapterContent(novelId, chapter)
+        if (rendered == _renderedContent.value) return
         val info = ttsManager.playbackInfo.value
         val ttsActiveHere = info.chapterId == chapter.id &&
             (info.state == com.example.tts.TtsState.PLAYING || info.state == com.example.tts.TtsState.PAUSED)
+        _renderedContent.value = rendered
         if (ttsActiveHere) {
-            pendingRefresh = true
-            return
+            val wasPaused = info.state == com.example.tts.TtsState.PAUSED
+            val paragraphCount = TtsManager.parseParagraphs(rendered).size
+            val index = info.currentChunkIndex.coerceIn(0, (paragraphCount - 1).coerceAtLeast(0))
+            startTtsForChapter(chapter, rendered, index, startPaused = wasPaused)
         }
-        pendingRefresh = false
-        _renderedContent.value = repository.getRenderedChapterContent(novelId, chapter)
     }
 
     fun updateReadingPosition(paragraphIndex: Int, scrollY: Int, scrollPercent: Float) {
@@ -259,22 +244,20 @@ class ReaderViewModel(
         }
     }
 
-    fun updateScrollPosition(scrollY: Int, scrollPercent: Float) {
-        val paragraphIndex = maxOf(0, scrollY - 1)
-        updateReadingPosition(paragraphIndex, scrollY, scrollPercent)
-    }
-
     fun saveCurrentPositionNow() {
         val chapter = _currentChapter.value ?: return
-        if (lastSavedParagraph == lastScrollParagraphIndex && kotlin.math.abs(lastSavedProgress - lastScrollProgress) < 0.01f) {
+        val paraToSave = lastScrollParagraphIndex
+        val scrollToSave = lastScrollIndex
+        val progressToSave = lastScrollProgress
+        if (lastSavedParagraph == paraToSave && kotlin.math.abs(lastSavedProgress - progressToSave) < 0.01f) {
             return
         }
-        lastSavedParagraph = lastScrollParagraphIndex
-        lastSavedIndex = lastScrollIndex
-        lastSavedProgress = lastScrollProgress
+        lastSavedParagraph = paraToSave
+        lastSavedIndex = scrollToSave
+        lastSavedProgress = progressToSave
         saveScope.launch {
-            com.example.logging.AppLogger.d("ReaderViewModel", "saveCurrentPositionNow: id=${chapter.id}, para=$lastScrollParagraphIndex, scrollY=$lastScrollIndex")
-            repository.updateReadingPosition(chapter.id, lastScrollParagraphIndex, lastScrollIndex)
+            com.example.logging.AppLogger.d("ReaderViewModel", "saveCurrentPositionNow: id=${chapter.id}, para=$paraToSave, scrollY=$scrollToSave")
+            repository.updateReadingPosition(chapter.id, paraToSave, scrollToSave)
         }
     }
 
@@ -356,15 +339,6 @@ class ReaderViewModel(
         ttsManager.stop()
     }
 
-    fun playFromParagraph(paragraphIndex: Int) {
-        val chapter = _currentChapter.value ?: return
-        if (ttsManager.isPlayingChapter(novelId, chapter.id)) {
-            ttsManager.seekToChunk(paragraphIndex)
-        } else {
-            playCurrentChapterTts(startFromChunkIndex = paragraphIndex)
-        }
-    }
-
     fun playFromSentence(paragraphIndex: Int, startCharOffset: Int) {
         val chapter = _currentChapter.value ?: return
         viewModelScope.launch {
@@ -374,14 +348,11 @@ class ReaderViewModel(
                 _renderedContent.value = content
             }
             if (!ttsManager.isPlayingChapter(novelId, chapter.id)) {
-                val currentSettings = settings.value
-                val splitMode = com.example.data.model.ParagraphSplitMode.fromString(currentSettings.splitLongParagraphs)
                 ttsManager.prepareChapter(
                     novelId = novelId,
                     chapterId = chapter.id,
                     chapterTitle = chapter.title,
                     content = content,
-                    maxChars = splitMode.maxChars,
                     onChapterComplete = onTtsChapterComplete
                 )
             }
@@ -398,6 +369,18 @@ class ReaderViewModel(
         ttsManager.nextChunk()
     }
 
+    /** Jump to a paragraph (used by the player's seek bar). */
+    fun seekTtsToParagraph(index: Int) {
+        ttsManager.seekToChunk(index)
+    }
+
+    fun ttsRemainingSeconds(): Int = ttsManager.estimatedRemainingSeconds()
+
+    val ttsSleepTimer: StateFlow<com.example.tts.SleepTimerState> = ttsManager.sleepTimer
+    fun setSleepTimerMinutes(minutes: Int) = ttsManager.setSleepTimerMinutes(minutes)
+    fun setSleepAtChapterEnd() = ttsManager.setSleepAtChapterEnd()
+    fun cancelSleepTimer() = ttsManager.cancelSleepTimer()
+
     private fun playCurrentChapterTts(startFromChunkIndex: Int = 0) {
         val chapter = _currentChapter.value ?: return
         viewModelScope.launch {
@@ -410,58 +393,16 @@ class ReaderViewModel(
         }
     }
 
-    private fun startTtsForChapter(chapter: ChapterEntity, content: String, startFromChunkIndex: Int) {
-        val currentSettings = settings.value
-        val splitMode = com.example.data.model.ParagraphSplitMode.fromString(currentSettings.splitLongParagraphs)
+    private fun startTtsForChapter(chapter: ChapterEntity, content: String, startFromChunkIndex: Int, startPaused: Boolean = false) {
         ttsManager.playChapter(
             novelId = novelId,
             chapterId = chapter.id,
             chapterTitle = chapter.title,
             content = content,
             startFromChunkIndex = startFromChunkIndex,
-            maxChars = splitMode.maxChars,
-            onChapterComplete = onTtsChapterComplete
+            onChapterComplete = onTtsChapterComplete,
+            startPaused = startPaused
         )
-    }
-
-    private fun onSplitModeChanged(oldMode: String, newMode: String) {
-        val chapter = _currentChapter.value ?: return
-        val content = _renderedContent.value
-        if (content.isBlank()) return
-
-        val oldSplit = com.example.data.model.ParagraphSplitMode.fromString(oldMode)
-        val newSplit = com.example.data.model.ParagraphSplitMode.fromString(newMode)
-
-        val oldChunks = com.example.tts.ParagraphSplitter.parseParagraphChunks(content, oldSplit.maxChars)
-        val newChunks = com.example.tts.ParagraphSplitter.parseParagraphChunks(content, newSplit.maxChars)
-
-        val isTtsActive = ttsManager.isPlaying() || ttsManager.playbackInfo.value.state == com.example.tts.TtsState.PAUSED
-        val activeChunkIndex = if (isTtsActive) {
-            ttsManager.playbackInfo.value.currentChunkIndex
-        } else {
-            lastScrollParagraphIndex
-        }
-
-        val safeOldIdx = activeChunkIndex.coerceIn(0, (oldChunks.size - 1).coerceAtLeast(0))
-        val origIndex = if (oldChunks.isNotEmpty()) oldChunks[safeOldIdx].originalParagraphIndex else 0
-
-        val mappedNewIndex = newChunks.indexOfFirst { it.originalParagraphIndex == origIndex }.let {
-            if (it >= 0) it else 0
-        }.coerceIn(0, (newChunks.size - 1).coerceAtLeast(0))
-
-        lastScrollParagraphIndex = mappedNewIndex
-        _initialParagraphIndex.value = mappedNewIndex
-        viewModelScope.launch {
-            repository.updateReadingPosition(chapter.id, mappedNewIndex, 0)
-        }
-
-        if (isTtsActive) {
-            val wasPaused = ttsManager.playbackInfo.value.state == com.example.tts.TtsState.PAUSED
-            startTtsForChapter(chapter, content, mappedNewIndex)
-            if (wasPaused) {
-                ttsManager.pause()
-            }
-        }
     }
 
     fun setTtsRate(rate: Float) {
@@ -478,26 +419,40 @@ class ReaderViewModel(
         }
     }
 
+    fun setUseEdgeVoices(useEdge: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore.updateTtsEngine(if (useEdge) "edge" else "")
+        }
+    }
+
+    fun setEdgeWifiOnly(enabled: Boolean) {
+        ttsManager.setEdgeWifiOnly(enabled)
+        viewModelScope.launch {
+            settingsDataStore.updateEdgeWifiOnly(enabled)
+        }
+    }
+
+    fun clearEdgeChapter() {
+        ttsManager.clearEdgeChapter()
+    }
+
+    fun clearEdgeCache() {
+        ttsManager.clearEdgeCache()
+    }
+
+    /** Total size of the downloaded Edge audio in bytes (reads the disk, so it runs off the main thread). */
+    suspend fun edgeCacheSize(): Long = withContext(Dispatchers.IO) { ttsManager.edgeCacheSize() }
+
+    fun setEdgeVoice(voice: String) {
+        viewModelScope.launch {
+            settingsDataStore.updateEdgeVoice(voice)
+        }
+    }
+
     fun updateSettings(newSettings: ReaderSettings) {
         viewModelScope.launch {
             settingsDataStore.saveAllSettings(newSettings)
         }
-    }
-
-    fun shareToVoice(context: Context) {
-        val chapter = _currentChapter.value ?: return
-        val n = novel.value ?: return
-        val text = "${chapter.title}\n\n${_renderedContent.value}"
-        val sendIntent = Intent().apply {
-            action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_TITLE, "${n.title} - ${chapter.title}")
-            putExtra(Intent.EXTRA_SUBJECT, "${n.title} - ${chapter.title}")
-            putExtra(Intent.EXTRA_TEXT, text)
-            type = "text/plain"
-        }
-        val chooser = Intent.createChooser(sendIntent, "Play in @Voice / Share")
-        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(chooser)
     }
 
     override fun onCleared() {

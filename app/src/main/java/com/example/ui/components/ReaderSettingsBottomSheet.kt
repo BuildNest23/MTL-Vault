@@ -28,6 +28,10 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -159,6 +163,10 @@ fun ReaderSettingsBottomSheet(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Font Size Slider
+            var fontSizeDraft by remember(settings.fontSize) {
+                mutableFloatStateOf(settings.fontSize.toFloat())
+            }
+            val displayFontSize = kotlin.math.round(fontSizeDraft).toInt()
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -169,19 +177,28 @@ fun ReaderSettingsBottomSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "${settings.fontSize} sp",
+                    text = "$displayFontSize sp",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold
                 )
             }
             Slider(
-                value = settings.fontSize.toFloat(),
-                onValueChange = { onUpdateSettings(settings.copy(fontSize = it.toInt())) },
+                value = fontSizeDraft,
+                onValueChange = { fontSizeDraft = it },
+                onValueChangeFinished = {
+                    val committed = kotlin.math.round(fontSizeDraft).toInt()
+                    if (committed != settings.fontSize) {
+                        onUpdateSettings(settings.copy(fontSize = committed))
+                    }
+                },
                 valueRange = 12f..32f,
                 steps = 9
             )
 
             // Line Height Slider
+            var lineHeightDraft by remember(settings.lineHeight) {
+                mutableFloatStateOf(settings.lineHeight)
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -192,14 +209,19 @@ fun ReaderSettingsBottomSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = String.format("%.2f", settings.lineHeight),
+                    text = String.format("%.2f", lineHeightDraft),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold
                 )
             }
             Slider(
-                value = settings.lineHeight,
-                onValueChange = { onUpdateSettings(settings.copy(lineHeight = it)) },
+                value = lineHeightDraft,
+                onValueChange = { lineHeightDraft = it },
+                onValueChangeFinished = {
+                    if (lineHeightDraft != settings.lineHeight) {
+                        onUpdateSettings(settings.copy(lineHeight = lineHeightDraft))
+                    }
+                },
                 valueRange = 1.2f..2.4f,
                 steps = 11
             )

@@ -1,6 +1,5 @@
 package com.example.data.model
 
-import com.example.data.database.entities.NovelEntity
 
 data class NovelSummary(
     val id: String,

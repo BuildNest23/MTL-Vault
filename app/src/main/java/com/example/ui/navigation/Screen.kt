@@ -1,5 +1,7 @@
 package com.example.ui.navigation
 
+import android.net.Uri
+
 sealed class Screen(val route: String) {
     object Library : Screen("library")
     object Stats : Screen("stats")
@@ -10,25 +12,38 @@ sealed class Screen(val route: String) {
     /** The full audiobook player. Opened from the shelf with autoPlay = true, from the mini-player with false. */
     object AudioPlayer : Screen("audioplayer/{bookId}?autoPlay={autoPlay}") {
         fun createRoute(bookId: String, autoPlay: Boolean = false) =
-            "audioplayer/$bookId?autoPlay=$autoPlay"
+            "audioplayer/${encode(bookId)}?autoPlay=$autoPlay"
     }
 
     object NovelDetail : Screen("novel/{novelId}") {
-        fun createRoute(novelId: String) = "novel/$novelId"
+        fun createRoute(novelId: String) = "novel/${encode(novelId)}"
     }
 
     object Reader : Screen("reader/{novelId}/{chapterId}?autoPlay={autoPlay}") {
         fun createRoute(novelId: String, chapterId: String, autoPlay: Boolean = false) =
-            "reader/$novelId/$chapterId?autoPlay=$autoPlay"
+            "reader/${encode(novelId)}/${encode(chapterId)}?autoPlay=$autoPlay"
     }
 
     object ChapterEditor : Screen("editor/{novelId}?chapterId={chapterId}") {
         fun createRoute(novelId: String, chapterId: String? = null): String {
-            return if (chapterId != null) "editor/$novelId?chapterId=$chapterId" else "editor/$novelId"
+            val encodedNovelId = encode(novelId)
+            return if (chapterId != null) {
+                "editor/$encodedNovelId?chapterId=${encode(chapterId)}"
+            } else {
+                "editor/$encodedNovelId"
+            }
         }
     }
 
     object Replacements : Screen("replacements/{novelId}") {
-        fun createRoute(novelId: String) = "replacements/$novelId"
+        fun createRoute(novelId: String) = "replacements/${encode(novelId)}"
+    }
+
+    object Voices : Screen("voices/{novelId}") {
+        fun createRoute(novelId: String) = "voices/${encode(novelId)}"
+    }
+
+    companion object {
+        private fun encode(value: String): String = Uri.encode(value)
     }
 }

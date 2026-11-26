@@ -118,14 +118,25 @@ class AudioPlaybackService : MediaSessionService() {
         if (intent != null && intent.action == null) {
             val session = mediaSession
             val exo = session?.player
-            if (session != null && controller.state.value.hasBook && exo != null && exo.playWhenReady) {
-                // Playback has already begun, so Media3 can post its real media notification
-                // (play/pause, chapters, lock screen) and move the service to the foreground
-                // itself. The plain notification is skipped so the two never swap back and forth.
-                onUpdateNotification(session, true)
+            val readyForMediaNotif = session != null &&
+                controller.state.value.hasBook &&
+                exo != null &&
+                exo.playWhenReady &&
+                exo.mediaItemCount > 0 &&
+                exo.playbackState != Player.STATE_IDLE &&
+                exo.playerError == null
+            if (readyForMediaNotif) {
+                // Playback is active and valid, so Media3 can post its real media notification
+                // (play/pause, chapters, lock screen) and promote the service to foreground itself.
+                onUpdateNotification(session!!, true)
             } else {
-                // Nothing to show yet: still satisfy Android's "call startForeground quickly" rule.
+                // Always satisfy Android's startForeground contract immediately, even if the player
+                // is still loading, idle, in error, or no book is currently open.
                 showStartingNotification()
+                if (!controller.state.value.hasBook) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
         return super.onStartCommand(intent, flags, startId)
@@ -165,7 +176,9 @@ class AudioPlaybackService : MediaSessionService() {
 
     /** Takes the temporary notification away when the book is closed or cannot be played. */
     private fun watchPlayerState() {
-        scope.launch {
+        // Dispatch on Dispatchers.Main (not .immediate) so onCreate() never calls stopSelf()
+        // before onStartCommand() has had a chance to satisfy Android's startForeground() contract.
+        scope.launch(Dispatchers.Main) {
             controller.state
                 .map { if (!it.hasBook) 0 else if (it.status == PlaybackStatus.ERROR) 1 else 2 }
                 .distinctUntilChanged()

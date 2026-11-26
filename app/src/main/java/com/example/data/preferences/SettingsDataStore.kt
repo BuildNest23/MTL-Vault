@@ -30,6 +30,9 @@ class SettingsDataStore(private val context: Context) {
         val TTS_PITCH = floatPreferencesKey("tts_pitch")
         val TTS_VOICE = stringPreferencesKey("tts_voice")
         val TTS_ENGINE = stringPreferencesKey("tts_engine")
+        val PHONE_ENGINE = stringPreferencesKey("phone_engine")
+        val EDGE_VOICE = stringPreferencesKey("edge_voice")
+        val EDGE_WIFI_ONLY = booleanPreferencesKey("edge_wifi_only")
         val CONTINUE_READING = booleanPreferencesKey("continue_reading")
         val REPLACEMENTS_ENABLED = booleanPreferencesKey("replacements_enabled")
         val DETAILED_LOGGING = booleanPreferencesKey("detailed_logging")
@@ -57,6 +60,9 @@ class SettingsDataStore(private val context: Context) {
                 ttsPitch = preferences[PreferencesKeys.TTS_PITCH] ?: 1.0f,
                 ttsVoice = preferences[PreferencesKeys.TTS_VOICE] ?: "",
                 ttsEngine = preferences[PreferencesKeys.TTS_ENGINE] ?: "",
+                phoneEngine = preferences[PreferencesKeys.PHONE_ENGINE] ?: "",
+                edgeVoice = preferences[PreferencesKeys.EDGE_VOICE] ?: "",
+                edgeWifiOnly = preferences[PreferencesKeys.EDGE_WIFI_ONLY] ?: false,
                 continueReading = preferences[PreferencesKeys.CONTINUE_READING] ?: true,
                 replacementsEnabled = preferences[PreferencesKeys.REPLACEMENTS_ENABLED] ?: true,
                 detailedLogging = preferences[PreferencesKeys.DETAILED_LOGGING] ?: false,
@@ -100,16 +106,8 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[PreferencesKeys.FONT_SIZE] = size }
     }
 
-    suspend fun updateLineHeight(lineHeight: Float) {
-        context.dataStore.edit { it[PreferencesKeys.LINE_HEIGHT] = lineHeight }
-    }
-
     suspend fun updateFontFamily(fontFamily: String) {
         context.dataStore.edit { it[PreferencesKeys.FONT_FAMILY] = fontFamily }
-    }
-
-    suspend fun updateMaxWidth(width: Int) {
-        context.dataStore.edit { it[PreferencesKeys.MAX_WIDTH] = width }
     }
 
     suspend fun updateTtsRate(rate: Float) {
@@ -128,6 +126,22 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[PreferencesKeys.TTS_ENGINE] = engine }
     }
 
+    suspend fun updatePhoneEngine(packageName: String) {
+        context.dataStore.edit {
+            it[PreferencesKeys.PHONE_ENGINE] = packageName
+            // A voice name belongs to one engine, so forget the old one
+            it[PreferencesKeys.TTS_VOICE] = ""
+        }
+    }
+
+    suspend fun updateEdgeVoice(voice: String) {
+        context.dataStore.edit { it[PreferencesKeys.EDGE_VOICE] = voice }
+    }
+
+    suspend fun updateEdgeWifiOnly(enabled: Boolean) {
+        context.dataStore.edit { it[PreferencesKeys.EDGE_WIFI_ONLY] = enabled }
+    }
+
     suspend fun updateContinueReading(enabled: Boolean) {
         context.dataStore.edit { it[PreferencesKeys.CONTINUE_READING] = enabled }
     }
@@ -139,10 +153,6 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun updateDetailedLogging(enabled: Boolean) {
         context.dataStore.edit { it[PreferencesKeys.DETAILED_LOGGING] = enabled }
-    }
-
-    suspend fun updateSplitLongParagraphs(mode: String) {
-        context.dataStore.edit { it[PreferencesKeys.SPLIT_LONG_PARAGRAPHS] = mode.lowercase() }
     }
 
     suspend fun updateHideReadChapters(hide: Boolean) {
@@ -160,6 +170,9 @@ class SettingsDataStore(private val context: Context) {
             prefs[PreferencesKeys.TTS_PITCH] = settings.ttsPitch
             prefs[PreferencesKeys.TTS_VOICE] = settings.ttsVoice
             prefs[PreferencesKeys.TTS_ENGINE] = settings.ttsEngine
+            prefs[PreferencesKeys.PHONE_ENGINE] = settings.phoneEngine
+            prefs[PreferencesKeys.EDGE_VOICE] = settings.edgeVoice
+            prefs[PreferencesKeys.EDGE_WIFI_ONLY] = settings.edgeWifiOnly
             prefs[PreferencesKeys.CONTINUE_READING] = settings.continueReading
             prefs[PreferencesKeys.REPLACEMENTS_ENABLED] = settings.replacementsEnabled
             prefs[PreferencesKeys.DETAILED_LOGGING] = settings.detailedLogging

@@ -30,6 +30,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -56,6 +58,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.tts.edge.EdgeVoices
 import com.example.ui.components.ConfirmDialog
 import com.example.ui.components.MtlTopBar
 
@@ -271,6 +274,157 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Edge neural voices",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Natural-sounding Microsoft voices. Needs internet, no account or setup. Uses your phone's voice when offline.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = settings.ttsEngine == "edge",
+                                onCheckedChange = { viewModel.updateUseEdgeVoices(it) },
+                                modifier = Modifier.testTag("settings_edge_voices_switch")
+                            )
+                        }
+
+                        if (settings.ttsEngine == "edge") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            var voiceMenuOpen by remember { mutableStateOf(false) }
+                            Box {
+                                OutlinedButton(
+                                    onClick = { voiceMenuOpen = true },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Voice: " + EdgeVoices.labelFor(settings.edgeVoice))
+                                }
+                                DropdownMenu(
+                                    expanded = voiceMenuOpen,
+                                    onDismissRequest = { voiceMenuOpen = false }
+                                ) {
+                                    EdgeVoices.all.forEach { voice ->
+                                        DropdownMenuItem(
+                                            text = { Text(voice.label) },
+                                            onClick = {
+                                                viewModel.updateEdgeVoice(voice.shortName)
+                                                voiceMenuOpen = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Phone voice: which speech engine to use (e.g. ToBe SAID) and which of its voices
+                        Text(
+                            text = "Phone voice engine",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Used when Edge voices are off or offline. Pick an installed speech engine such as ToBe SAID, then one of its voices.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        var engines by remember { mutableStateOf(viewModel.phoneEngines()) }
+                        var engineMenuOpen by remember { mutableStateOf(false) }
+                        val engineLabel = if (settings.phoneEngine.isBlank()) {
+                            "System default"
+                        } else {
+                            engines.find { it.packageName == settings.phoneEngine }?.label ?: settings.phoneEngine
+                        }
+                        Box {
+                            OutlinedButton(
+                                onClick = {
+                                    engines = viewModel.phoneEngines()
+                                    engineMenuOpen = true
+                                },
+                                modifier = Modifier.fillMaxWidth().testTag("settings_phone_engine_button")
+                            ) {
+                                Text("Engine: $engineLabel")
+                            }
+                            DropdownMenu(
+                                expanded = engineMenuOpen,
+                                onDismissRequest = { engineMenuOpen = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("System default") },
+                                    onClick = {
+                                        viewModel.updatePhoneEngine("")
+                                        engineMenuOpen = false
+                                    }
+                                )
+                                engines.forEach { engine ->
+                                    DropdownMenuItem(
+                                        text = { Text(engine.label) },
+                                        onClick = {
+                                            viewModel.updatePhoneEngine(engine.packageName)
+                                            engineMenuOpen = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        var phoneVoices by remember { mutableStateOf(viewModel.phoneVoices()) }
+                        var phoneVoiceMenuOpen by remember { mutableStateOf(false) }
+                        val phoneVoiceLabel = settings.ttsVoice.ifBlank { "Engine default" }
+                        Box {
+                            OutlinedButton(
+                                onClick = {
+                                    phoneVoices = viewModel.phoneVoices()
+                                    phoneVoiceMenuOpen = true
+                                },
+                                modifier = Modifier.fillMaxWidth().testTag("settings_phone_voice_button")
+                            ) {
+                                Text("Voice: $phoneVoiceLabel")
+                            }
+                            DropdownMenu(
+                                expanded = phoneVoiceMenuOpen,
+                                onDismissRequest = { phoneVoiceMenuOpen = false }
+                            ) {
+                                if (phoneVoices.isEmpty()) {
+                                    DropdownMenuItem(
+                                        text = { Text("No voices yet. Wait a moment and try again.") },
+                                        onClick = { phoneVoiceMenuOpen = false }
+                                    )
+                                }
+                                phoneVoices.forEach { voice ->
+                                    DropdownMenuItem(
+                                        text = { Text(voice.label) },
+                                        onClick = {
+                                            viewModel.updateTtsVoice(voice.name)
+                                            phoneVoiceMenuOpen = false
+                                            viewModel.previewPhoneVoice()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedButton(
+                            onClick = { viewModel.previewPhoneVoice() },
+                            modifier = Modifier.fillMaxWidth().testTag("settings_phone_voice_sample")
+                        ) {
+                            Text("Play a sample")
+                        }
+
                         Spacer(modifier = Modifier.height(12.dp))
 
                         Row(
@@ -650,7 +804,7 @@ fun SettingsScreen(
             isDestructive = true,
             onConfirm = {
                 showResetDialog = false
-                viewModel.resetAllData()
+                viewModel.resetAllData(context)
             },
             onDismiss = { showResetDialog = false }
         )

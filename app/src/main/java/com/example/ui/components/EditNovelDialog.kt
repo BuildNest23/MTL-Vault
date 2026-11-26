@@ -3,6 +3,7 @@ package com.example.ui.components
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -78,7 +79,7 @@ fun EditNovelDialog(
     var pickedCover by remember { mutableStateOf<Uri?>(null) }
     var coverRemoved by remember { mutableStateOf(false) }
 
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
             pickedCover = uri
             coverRemoved = false
@@ -110,7 +111,11 @@ fun EditNovelDialog(
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         OutlinedButton(
-                            onClick = { imagePicker.launch("image/*") },
+                            onClick = {
+                                imagePicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
                             modifier = Modifier.testTag("edit_novel_choose_cover")
                         ) {
                             Text(if (hasCover) "Change cover" else "Choose cover")
