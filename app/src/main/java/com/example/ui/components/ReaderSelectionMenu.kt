@@ -42,9 +42,27 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
+import com.example.ui.theme.EditorialHighlightSwatches
+
 /**
- * Replaces the system selection menu in the reader with our own: Copy, Replace (add a text
- * replacement rule), Define (dictionary lookup) and More (translate / other apps).
+ * Replaces the system selection menu in the reader with our own: Highlight swatches, Add Note,
+ * Copy, Replace (add a text replacement rule), Define (dictionary lookup) and More.
  *
  * Compose only hands a toolbar a "copy" callback, so to find out WHICH text is selected we call
  * that callback and read the text back from the clipboard.
@@ -81,7 +99,9 @@ fun rememberReaderTextToolbar(): ReaderTextToolbar = remember { ReaderTextToolba
 @Composable
 fun ReaderSelectionPopup(
     toolbar: ReaderTextToolbar,
-    onReplace: (selectedText: String) -> Unit
+    onReplace: (selectedText: String) -> Unit,
+    onHighlight: ((selectedText: String, colorKey: String) -> Unit)? = null,
+    onAddNote: ((selectedText: String) -> Unit)? = null
 ) {
     val data = toolbar.menu ?: return
     val context = LocalContext.current
@@ -118,31 +138,91 @@ fun ReaderSelectionPopup(
         properties = PopupProperties(focusable = false)
     ) {
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,
-            tonalElevation = 6.dp,
-            shadowElevation = 8.dp
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            tonalElevation = 4.dp,
+            shadowElevation = 10.dp
         ) {
-            Row(modifier = Modifier.padding(horizontal = 2.dp)) {
-                MenuItem("Copy") {
-                    data.onCopy?.invoke()
-                    toolbar.hide()
+            Column {
+                if (onHighlight != null || onAddNote != null) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (onHighlight != null) {
+                            EditorialHighlightSwatches.forEach { swatch ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
+                                        .testTag("selection_highlight_${swatch.key}")
+                                        .clickable {
+                                            val text = grabSelection()
+                                            toolbar.hide()
+                                            if (text.isNotBlank()) onHighlight(text, swatch.key)
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(22.dp)
+                                            .clip(CircleShape)
+                                            .background(swatch.indicator)
+                                            .border(
+                                                width = 1.5.dp,
+                                                color = MaterialTheme.colorScheme.surface,
+                                                shape = CircleShape
+                                            )
+                                    )
+                                }
+                            }
+                        }
+
+                        if (onAddNote != null) {
+                            TextButton(
+                                onClick = {
+                                    val text = grabSelection()
+                                    toolbar.hide()
+                                    if (text.isNotBlank()) onAddNote(text)
+                                },
+                                modifier = Modifier.testTag("selection_add_note")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.EditNote,
+                                    contentDescription = "Add reading note",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Note", fontSize = 13.sp)
+                            }
+                        }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-                MenuItem("Replace") {
-                    val text = grabSelection()
-                    toolbar.hide()
-                    if (text.isNotBlank()) onReplace(text)
-                }
-                MenuItem("Define") {
-                    val text = grabSelection()
-                    toolbar.hide()
-                    if (text.isNotBlank()) defineWord(context, text)
-                }
-                MenuItem("More") {
-                    val text = grabSelection()
-                    toolbar.hide()
-                    if (text.isNotBlank()) openWithOtherApps(context, text)
+
+                Row(modifier = Modifier.padding(horizontal = 2.dp)) {
+                    MenuItem("Copy") {
+                        data.onCopy?.invoke()
+                        toolbar.hide()
+                    }
+                    MenuItem("Replace") {
+                        val text = grabSelection()
+                        toolbar.hide()
+                        if (text.isNotBlank()) onReplace(text)
+                    }
+                    MenuItem("Define") {
+                        val text = grabSelection()
+                        toolbar.hide()
+                        if (text.isNotBlank()) defineWord(context, text)
+                    }
+                    MenuItem("More") {
+                        val text = grabSelection()
+                        toolbar.hide()
+                        if (text.isNotBlank()) openWithOtherApps(context, text)
+                    }
                 }
             }
         }
@@ -152,7 +232,7 @@ fun ReaderSelectionPopup(
 @Composable
 private fun MenuItem(label: String, onClick: () -> Unit) {
     TextButton(onClick = onClick) {
-        Text(label, fontSize = 14.sp)
+        Text(label, fontSize = 13.sp)
     }
 }
 

@@ -6,13 +6,20 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.CoverStorage
+import com.example.data.database.entities.NovelShelfCrossRef
+import com.example.data.database.entities.ShelfEntity
+import com.example.data.model.NovelSearchHit
 import com.example.data.model.NovelSummary
 import com.example.data.remote.AniListClient
 import com.example.data.repository.NovelRepository
+import com.example.data.preferences.SettingsDataStore
 import com.example.importexport.ChapterSplitter
 import com.example.importexport.EpubParser
 import com.example.tts.VoiceCastStore
+import com.example.ui.components.evictNovelCoverCache
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -21,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -32,7 +40,8 @@ sealed class LibraryEvent {
 }
 
 class LibraryViewModel(
-    private val repository: NovelRepository
+    private val repository: NovelRepository,
+    private val settingsDataStore: SettingsDataStore? = null
 ) : ViewModel() {
 
     val novels: StateFlow<List<NovelSummary>> = repository.getNovelSummaries()
@@ -42,8 +51,45 @@ class LibraryViewModel(
             initialValue = emptyList()
         )
 
+    private val localGridColumns = MutableStateFlow(2)
+
+    val gridColumns: StateFlow<Int> = (settingsDataStore?.libraryGridColumnsFlow ?: localGridColumns)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = 2
+        )
+
     private val _events = MutableSharedFlow<LibraryEvent>()
     val events: SharedFlow<LibraryEvent> = _events.asSharedFlow()
+
+    val shelves: StateFlow<List<ShelfEntity>> = repository.observeShelves()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val shelfMemberships: StateFlow<List<NovelShelfCrossRef>> = repository.observeShelfMemberships()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _searchInsideChapters = MutableStateFlow(false)
+    val searchInsideChapters: StateFlow<Boolean> = _searchInsideChapters.asStateFlow()
+
+    private val _chapterSearchResults = MutableStateFlow<List<NovelSearchHit>>(emptyList())
+    val chapterSearchResults: StateFlow<List<NovelSearchHit>> = _chapterSearchResults.asStateFlow()
+
+    private val _isSearchingChapters = MutableStateFlow(false)
+    val isSearchingChapters: StateFlow<Boolean> = _isSearchingChapters.asStateFlow()
+
+    private var chapterSearchJob: Job? = null
 
     private val _pendingImportText = MutableStateFlow<String?>(null)
     val pendingImportText: StateFlow<String?> = _pendingImportText.asStateFlow()
@@ -53,6 +99,100 @@ class LibraryViewModel(
     init {
         viewModelScope.launch {
             repository.ensureSampleDataIfEmpty()
+        }
+    }
+
+    fun updateSearchQuery(query: String) {
+        _searchQuery.value = query
+        if (_searchInsideChapters.value) {
+            triggerChapterSearch(query)
+        }
+    }
+
+    fun setSearchInsideChapters(enabled: Boolean) {
+        _searchInsideChapters.value = enabled
+        if (enabled) {
+            triggerChapterSearch(_searchQuery.value)
+        } else {
+            chapterSearchJob?.cancel()
+            _isSearchingChapters.value = false
+            _chapterSearchResults.value = emptyList()
+        }
+    }
+
+    fun clearSearch() {
+        chapterSearchJob?.cancel()
+        _searchQuery.value = ""
+        _searchInsideChapters.value = false
+        _isSearchingChapters.value = false
+        _chapterSearchResults.value = emptyList()
+    }
+
+    private fun triggerChapterSearch(rawQuery: String) {
+        chapterSearchJob?.cancel()
+        val trimmed = rawQuery.trim()
+        if (trimmed.length < 2) {
+            _isSearchingChapters.value = false
+            _chapterSearchResults.value = emptyList()
+            return
+        }
+        chapterSearchJob = viewModelScope.launch {
+            _isSearchingChapters.value = true
+            delay(250)
+            try {
+                _chapterSearchResults.value = repository.searchChaptersGlobal(trimmed)
+            } finally {
+                _isSearchingChapters.value = false
+            }
+        }
+    }
+
+    fun createShelf(name: String) {
+        viewModelScope.launch {
+            val created = repository.createShelf(name)
+            if (created != null) {
+                _events.emit(LibraryEvent.ShowToast("Shelf \"${created.name}\" created."))
+            }
+        }
+    }
+
+    fun createShelfAndAssign(novelId: String, name: String) {
+        viewModelScope.launch {
+            val created = repository.createShelf(name)
+            if (created != null) {
+                repository.toggleNovelShelf(novelId, created.id)
+                _events.emit(LibraryEvent.ShowToast("Added to \"${created.name}\"."))
+            }
+        }
+    }
+
+    fun renameShelf(shelfId: String, newName: String) {
+        viewModelScope.launch {
+            repository.renameShelf(shelfId, newName)
+            _events.emit(LibraryEvent.ShowToast("Shelf renamed."))
+        }
+    }
+
+    fun deleteShelf(shelfId: String) {
+        viewModelScope.launch {
+            repository.deleteShelf(shelfId)
+            _events.emit(LibraryEvent.ShowToast("Shelf removed."))
+        }
+    }
+
+    fun toggleNovelShelf(novelId: String, shelfId: String) {
+        viewModelScope.launch {
+            repository.toggleNovelShelf(novelId, shelfId)
+        }
+    }
+
+    fun toggleGridColumns() {
+        val next = if (gridColumns.value == 2) 3 else 2
+        localGridColumns.value = next
+        if (settingsDataStore != null) {
+            viewModelScope.launch {
+                settingsDataStore.updateLibraryGridColumns(next)
+            }
         }
     }
 
@@ -168,6 +308,7 @@ class LibraryViewModel(
                 CoverStorage.deleteOwnCover(appContext, novel.coverUri)
                 VoiceCastStore(appContext).delete(novel.id)
             }
+            evictNovelCoverCache(novel.coverUri)
             _events.emit(LibraryEvent.ShowToast("\"${novel.title}\" deleted."))
         }
     }
@@ -199,12 +340,14 @@ class LibraryViewModel(
                 }
                 if (saved != null) {
                     withContext(Dispatchers.IO) { CoverStorage.deleteOwnCover(appContext, current.coverUri) }
+                    evictNovelCoverCache(current.coverUri)
                     coverUri = saved
                 } else {
                     coverProblem = true
                 }
             } else if (removeCover) {
                 withContext(Dispatchers.IO) { CoverStorage.deleteOwnCover(appContext, current.coverUri) }
+                evictNovelCoverCache(current.coverUri)
                 coverUri = null
             }
 

@@ -6,19 +6,17 @@ import androidx.core.content.ContextCompat
 import com.example.audio.AudioImporter
 import com.example.audio.AudioPlaybackService
 import com.example.audio.AudioPlayerController
+import com.example.audio.PlaybackCoordinator
 import com.example.data.database.AppDatabase
 import com.example.data.preferences.SettingsDataStore
 import com.example.data.repository.AudioRepository
 import com.example.data.repository.NovelRepository
 import com.example.tts.TtsManager
-import com.example.tts.TtsState
 
 import com.example.logging.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class MtlVaultApplication : Application() {
@@ -47,6 +45,9 @@ class MtlVaultApplication : Application() {
     lateinit var audioController: AudioPlayerController
         private set
 
+    lateinit var playbackCoordinator: PlaybackCoordinator
+        private set
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onCreate() {
@@ -58,7 +59,9 @@ class MtlVaultApplication : Application() {
             novelDao = database.novelDao(),
             chapterDao = database.chapterDao(),
             settingsDataStore = settingsDataStore,
-            database = database
+            database = database,
+            annotationDao = database.annotationDao(),
+            shelfDao = database.shelfDao()
         )
         ttsManager = TtsManager(this)
         AppLogger.voiceCountProvider = { ttsManager.getPhoneVoices().size }
@@ -75,7 +78,13 @@ class MtlVaultApplication : Application() {
                 AppLogger.e("MtlVaultApplication", "Failed to start audio service", e)
             }
         }
-        keepOnlyOneVoicePlaying()
+        playbackCoordinator = PlaybackCoordinator(
+            ttsManager = ttsManager,
+            audioController = audioController,
+            novelRepository = novelRepository,
+            settingsDataStore = settingsDataStore,
+            scope = appScope
+        )
 
         appScope.launch {
             settingsDataStore.settingsFlow.collect { settings ->
@@ -89,28 +98,6 @@ class MtlVaultApplication : Application() {
                     ttsManager.setVoice(settings.ttsVoice)
                 }
             }
-        }
-    }
-
-    /**
-     * An audiobook and text-to-speech never play together: starting one pauses the other.
-     */
-    private fun keepOnlyOneVoicePlaying() {
-        appScope.launch {
-            audioController.state
-                .map { it.isPlaying }
-                .distinctUntilChanged()
-                .collect { audioPlaying ->
-                    if (audioPlaying && ttsManager.isPlaying()) ttsManager.pause()
-                }
-        }
-        appScope.launch {
-            ttsManager.playbackInfo
-                .map { it.state == TtsState.PLAYING }
-                .distinctUntilChanged()
-                .collect { ttsPlaying ->
-                    if (ttsPlaying && audioController.state.value.isPlaying) audioController.pause()
-                }
         }
     }
 }

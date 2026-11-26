@@ -39,6 +39,7 @@ class SettingsDataStore(private val context: Context) {
         val SPLIT_LONG_PARAGRAPHS = stringPreferencesKey("split_long_paragraphs")
         val HIDE_READ_CHAPTERS = booleanPreferencesKey("hide_read_chapters")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
+        val LIBRARY_GRID_COLUMNS = intPreferencesKey("library_grid_columns")
     }
 
     val settingsFlow: Flow<ReaderSettings> = context.dataStore.data
@@ -94,8 +95,24 @@ class SettingsDataStore(private val context: Context) {
             preferences[PreferencesKeys.DYNAMIC_COLOR] ?: false
         }
 
+    val libraryGridColumnsFlow: Flow<Int> = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw exception
+            }
+        }
+        .map { preferences ->
+            (preferences[PreferencesKeys.LIBRARY_GRID_COLUMNS] ?: 2).coerceIn(2, 3)
+        }
+
     suspend fun updateDynamicColor(enabled: Boolean) {
         context.dataStore.edit { it[PreferencesKeys.DYNAMIC_COLOR] = enabled }
+    }
+
+    suspend fun updateLibraryGridColumns(columns: Int) {
+        context.dataStore.edit { it[PreferencesKeys.LIBRARY_GRID_COLUMNS] = columns.coerceIn(2, 3) }
     }
 
     suspend fun updateTheme(theme: String) {

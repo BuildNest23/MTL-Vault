@@ -58,12 +58,20 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.foundation.layout.fillMaxHeight
+import com.example.data.database.entities.NovelAnnotationEntity
 import com.example.data.model.ChapterSummary
+import com.example.data.model.NovelSearchHit
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -71,7 +79,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -116,10 +126,14 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalTextToolbar
 import com.example.ui.components.AddRuleFromSelectionDialog
+import com.example.ui.components.NovelSearchResultsList
 import com.example.ui.components.ReaderSelectionPopup
 import com.example.ui.components.rememberReaderTextToolbar
 import com.example.ui.components.ReaderSettingsBottomSheet
 import com.example.ui.components.TtsPlayerBar
+import com.example.ui.theme.LoraFontFamily
+import com.example.ui.theme.PlayfairDisplayFontFamily
+import com.example.ui.theme.PlusJakartaSansFontFamily
 import com.example.ui.theme.ReaderDarkBg
 import com.example.ui.theme.ReaderDarkText
 import com.example.ui.theme.ReaderLightBg
@@ -145,12 +159,23 @@ fun ReaderScreen(
     val sleepTimer by viewModel.ttsSleepTimer.collectAsStateWithLifecycle()
     val edgeProgress by viewModel.edgeProgress.collectAsStateWithLifecycle()
     val chaptersList by viewModel.chaptersList.collectAsStateWithLifecycle()
+    val novelAnnotations by viewModel.novelAnnotations.collectAsStateWithLifecycle()
+    val chapterAnnotations by viewModel.chapterAnnotations.collectAsStateWithLifecycle()
     val initialParagraphIndex by viewModel.initialParagraphIndex.collectAsStateWithLifecycle()
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
+    val isSearching by viewModel.isSearching.collectAsStateWithLifecycle()
 
     var showSettingsSheet by remember { mutableStateOf(false) }
     val selectionToolbar = rememberReaderTextToolbar()
     // Text the person selected and wants to turn into a replacement rule (null = dialog closed)
     var replaceSeed by remember { mutableStateOf<String?>(null) }
+    // Pending selection to save as a highlight with a reading note
+    var pendingNoteSelection by remember { mutableStateOf<LocatedSelection?>(null) }
+    // Existing highlight or bookmark being edited in the bottom sheet
+    var editingAnnotation by remember { mutableStateOf<NovelAnnotationEntity?>(null) }
+    // 0 = Chapters, 1 = Notes & Bookmarks, 2 = Full-Novel Search
+    var drawerTab by remember { mutableStateOf(0) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val drawerScope = rememberCoroutineScope()
     var controlsVisible by remember { mutableStateOf(true) }
@@ -193,6 +218,32 @@ fun ReaderScreen(
 
     val paragraphs = remember(renderedContent) {
         com.example.tts.TtsManager.parseParagraphs(renderedContent)
+    }
+
+    val annotationsByParagraph = remember(chapterAnnotations) {
+        chapterAnnotations.groupBy { it.paragraphIndex }
+    }
+
+    val currentVisibleParagraph by remember(paragraphs.size) {
+        derivedStateOf {
+            val raw = maxOf(0, lazyListState.firstVisibleItemIndex - 1)
+            raw.coerceIn(0, (paragraphs.size - 1).coerceAtLeast(0))
+        }
+    }
+
+    val currentParagraphBookmark = remember(annotationsByParagraph, currentVisibleParagraph) {
+        annotationsByParagraph[currentVisibleParagraph]
+            ?.firstOrNull { it.type == NovelAnnotationEntity.TYPE_BOOKMARK }
+    }
+
+    // Jump smoothly to a paragraph within the already-open chapter (e.g., tapping a bookmark in drawer)
+    LaunchedEffect(Unit) {
+        viewModel.scrollToParagraphEvent.collect { targetPara ->
+            if (paragraphs.isNotEmpty()) {
+                val clamped = targetPara.coerceIn(0, paragraphs.lastIndex)
+                lazyListState.scrollToItem(clamped + 1, 0)
+            }
+        }
     }
 
     // Restore scroll position on chapter change / initial load to saved paragraph
@@ -432,7 +483,11 @@ fun ReaderScreen(
         }
     }
 
-    val readerFontFamily = if (settings.fontFamily == "sans") FontFamily.SansSerif else FontFamily.Serif
+    val readerFontFamily = when (settings.fontFamily) {
+        "sans" -> PlusJakartaSansFontFamily
+        "system" -> FontFamily.Default
+        else -> LoraFontFamily
+    }
 
     val paragraphTextStyle = remember(readerFontFamily, settings.fontSize, settings.lineHeight, textColor) {
         TextStyle(
@@ -443,17 +498,23 @@ fun ReaderScreen(
         )
     }
 
-    val titleTextStyle = remember(readerFontFamily, textColor) {
+    val titleTextStyle = remember(textColor) {
         TextStyle(
-            fontFamily = readerFontFamily,
+            fontFamily = PlayfairDisplayFontFamily,
             fontWeight = FontWeight.Bold,
-            fontSize = 24.sp,
+            fontSize = 26.sp,
+            lineHeight = 34.sp,
             color = textColor,
             textAlign = TextAlign.Center
         )
     }
 
-    // Swipe right anywhere on the page (or tap the title / list button) to open the chapter list
+    val effectiveMaxWidth = settings.maxWidth.dp.coerceAtMost(680.dp)
+    val currentChapterPos = remember(chaptersList, chapter?.id) {
+        chaptersList.indexOfFirst { it.id == chapter?.id }
+    }
+
+    // Swipe right anywhere on the page (or tap the title / list button) to open the drawer
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = true,
@@ -461,10 +522,28 @@ fun ReaderScreen(
             ChapterDrawerContent(
                 chapters = chaptersList,
                 currentChapterId = chapter?.id,
+                annotations = novelAnnotations,
+                searchQuery = searchQuery,
+                searchResults = searchResults,
+                isSearching = isSearching,
+                selectedTab = drawerTab,
+                onSelectTab = { drawerTab = it },
                 isOpen = drawerState.targetValue == DrawerValue.Open,
                 onChapterClick = { chapterId ->
                     drawerScope.launch { drawerState.close() }
                     if (chapterId != chapter?.id) viewModel.loadChapter(chapterId)
+                },
+                onAnnotationClick = { ann ->
+                    drawerScope.launch { drawerState.close() }
+                    viewModel.jumpToAnnotation(ann)
+                },
+                onEditAnnotation = { ann -> editingAnnotation = ann },
+                onDeleteAnnotation = { ann -> viewModel.deleteAnnotation(ann.id) },
+                onSearchQueryChange = { viewModel.updateSearchQuery(it) },
+                onClearSearch = { viewModel.clearSearch() },
+                onSearchHitClick = { hit ->
+                    drawerScope.launch { drawerState.close() }
+                    viewModel.jumpToSearchHit(hit)
                 }
             )
         }
@@ -513,14 +592,48 @@ fun ReaderScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .widthIn(max = settings.maxWidth.dp)
-                        .padding(top = 24.dp, bottom = 28.dp)
+                        .widthIn(max = effectiveMaxWidth)
+                        .padding(top = 28.dp, bottom = 30.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    if (currentChapterPos >= 0 && chaptersList.isNotEmpty()) {
+                        Text(
+                            text = "CHAPTER ${currentChapterPos + 1} OF ${chaptersList.size}",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                letterSpacing = 1.4.sp,
+                                color = textColor.copy(alpha = 0.55f)
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
                     Text(
                         text = chapter?.title ?: "Chapter",
                         style = titleTextStyle,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(32.dp)
+                                .height(1.dp)
+                                .background(textColor.copy(alpha = 0.22f))
+                        )
+                        Text(
+                            text = "✦",
+                            fontSize = 11.sp,
+                            color = textColor.copy(alpha = 0.40f)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .width(32.dp)
+                                .height(1.dp)
+                                .background(textColor.copy(alpha = 0.22f))
+                        )
+                    }
                 }
             }
 
@@ -532,16 +645,20 @@ fun ReaderScreen(
                 // Split one paragraph at a time, only when it is on screen. Splitting the whole chapter
                 // up front blocked the main thread for a moment every time a long chapter opened.
                 val sentences = remember(paragraph) { SentenceSplitter.splitIntoSentences(paragraph) }
+                val paraAnnotations = annotationsByParagraph[paraIndex].orEmpty()
 
                 ReaderParagraphItem(
                     paraIndex = paraIndex,
                     text = paragraph,
                     sentences = sentences,
+                    paragraphAnnotations = paraAnnotations,
+                    readerTheme = settings.theme,
                     highlightStateFlow = viewModel.ttsHighlightState,
                     highlightColor = sentenceHighlightColor,
                     textStyle = paragraphTextStyle,
-                    maxWidth = settings.maxWidth.dp,
+                    maxWidth = effectiveMaxWidth,
                     onClick = { controlsVisible = !controlsVisible },
+                    onAnnotationClick = { ann -> editingAnnotation = ann },
                     onDoubleTapSentence = { sentenceStartOffset ->
                         requestNotificationPermissionIfNeeded()
                         viewModel.playFromSentence(paraIndex, sentenceStartOffset)
@@ -554,28 +671,53 @@ fun ReaderScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .widthIn(max = settings.maxWidth.dp)
-                        .padding(top = 40.dp, bottom = 100.dp),
+                        .widthIn(max = effectiveMaxWidth)
+                        .padding(top = 36.dp, bottom = 100.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    HorizontalDivider(
+                        color = textColor.copy(alpha = 0.14f),
+                        modifier = Modifier.padding(bottom = 20.dp)
+                    )
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        TextButton(
-                            onClick = { viewModel.prevChapter() },
-                            modifier = Modifier.testTag("reader_end_prev_button")
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("reader_end_prev_button")
+                                .clickable { viewModel.prevChapter() },
+                            shape = RoundedCornerShape(14.dp),
+                            color = textColor.copy(alpha = 0.06f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, textColor.copy(alpha = 0.14f))
                         ) {
-                            Text("← Prev Chapter", color = textColor)
+                            Text(
+                                text = "← Previous",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = textColor,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 14.dp, horizontal = 12.dp)
+                            )
                         }
 
-                        TextButton(
-                            onClick = { viewModel.nextChapter() },
-                            modifier = Modifier.testTag("reader_end_next_button")
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("reader_end_next_button")
+                                .clickable { viewModel.nextChapter() },
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.primary
                         ) {
-                            Text("Next Chapter →", color = textColor)
+                            Text(
+                                text = "Next Chapter →",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 14.dp, horizontal = 12.dp)
+                            )
                         }
                     }
                 }
@@ -586,7 +728,25 @@ fun ReaderScreen(
 
         ReaderSelectionPopup(
             toolbar = selectionToolbar,
-            onReplace = { selected -> replaceSeed = selected }
+            onReplace = { selected -> replaceSeed = selected },
+            onHighlight = { selected, colorKey ->
+                val visibleParas = lazyListState.layoutInfo.visibleItemsInfo
+                    .mapNotNull { info -> (info.index - 1).takeIf { it in paragraphs.indices } }
+                locateSelectionInParagraphs(paragraphs, visibleParas, selected)?.let { located ->
+                    viewModel.addHighlight(
+                        paragraphIndex = located.paragraphIndex,
+                        quoteText = located.quoteText,
+                        startOffset = located.startOffset,
+                        endOffset = located.endOffset,
+                        colorKey = colorKey
+                    )
+                }
+            },
+            onAddNote = { selected ->
+                val visibleParas = lazyListState.layoutInfo.visibleItemsInfo
+                    .mapNotNull { info -> (info.index - 1).takeIf { it in paragraphs.indices } }
+                pendingNoteSelection = locateSelectionInParagraphs(paragraphs, visibleParas, selected)
+            }
         )
 
         // Animated Top Navigation Bar
@@ -659,35 +819,42 @@ fun ReaderScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = { drawerScope.launch { drawerState.open() } },
+                        onClick = {
+                            drawerTab = 0
+                            drawerScope.launch { drawerState.open() }
+                        },
                         modifier = Modifier.testTag("reader_chapter_list_button")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.List,
-                            contentDescription = "Chapter list",
+                            contentDescription = "Chapters and notes drawer",
                             tint = textColor
                         )
                     }
 
                     IconButton(
-                        onClick = onOpenVoices,
-                        modifier = Modifier.testTag("reader_voices_button")
+                        onClick = {
+                            val preview = paragraphs.getOrNull(currentVisibleParagraph).orEmpty()
+                            viewModel.toggleBookmarkAt(currentVisibleParagraph, preview)
+                        },
+                        modifier = Modifier.testTag("reader_bookmark_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.RecordVoiceOver,
-                            contentDescription = "Character voices",
-                            tint = textColor
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onOpenReplacements,
-                        modifier = Modifier.testTag("reader_replacements_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SwapHoriz,
-                            contentDescription = "Text Replacements",
-                            tint = textColor
+                            imageVector = if (currentParagraphBookmark != null) {
+                                Icons.Default.Bookmark
+                            } else {
+                                Icons.Default.BookmarkBorder
+                            },
+                            contentDescription = if (currentParagraphBookmark != null) {
+                                "Remove paragraph bookmark"
+                            } else {
+                                "Bookmark current paragraph"
+                            },
+                            tint = if (currentParagraphBookmark != null) {
+                                MaterialTheme.colorScheme.secondary
+                            } else {
+                                textColor
+                            }
                         )
                     }
 
@@ -700,6 +867,91 @@ fun ReaderScreen(
                             contentDescription = "Appearance Settings",
                             tint = textColor
                         )
+                    }
+
+                    var overflowOpen by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(
+                            onClick = { overflowOpen = true },
+                            modifier = Modifier.testTag("reader_more_menu_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "More reader options",
+                                tint = textColor
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = overflowOpen,
+                            onDismissRequest = { overflowOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Search in Novel") },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Search, contentDescription = null)
+                                },
+                                onClick = {
+                                    overflowOpen = false
+                                    drawerTab = 2
+                                    drawerScope.launch { drawerState.open() }
+                                },
+                                modifier = Modifier.testTag("reader_menu_search")
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (novelAnnotations.isNotEmpty()) {
+                                            "Bookmarks & Notes (${novelAnnotations.size})"
+                                        } else {
+                                            "Bookmarks & Notes"
+                                        }
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Bookmarks, contentDescription = null)
+                                },
+                                onClick = {
+                                    overflowOpen = false
+                                    drawerTab = 1
+                                    drawerScope.launch { drawerState.open() }
+                                },
+                                modifier = Modifier.testTag("reader_menu_notes")
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Character Voices") },
+                                leadingIcon = {
+                                    Icon(Icons.Default.RecordVoiceOver, contentDescription = null)
+                                },
+                                onClick = {
+                                    overflowOpen = false
+                                    onOpenVoices()
+                                },
+                                modifier = Modifier.testTag("reader_voices_button")
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Text Replacements") },
+                                leadingIcon = {
+                                    Icon(Icons.Default.SwapHoriz, contentDescription = null)
+                                },
+                                onClick = {
+                                    overflowOpen = false
+                                    onOpenReplacements()
+                                },
+                                modifier = Modifier.testTag("reader_replacements_button")
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(if (chapter?.read == true) "Mark as Unread" else "Mark as Read")
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Check, contentDescription = null)
+                                },
+                                onClick = {
+                                    overflowOpen = false
+                                    viewModel.toggleReadStatus()
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -781,6 +1033,50 @@ fun ReaderScreen(
         )
     }
 
+    pendingNoteSelection?.let { located ->
+        AnnotationEditorSheet(
+            title = "Highlight & Add Note",
+            quoteText = located.quoteText,
+            isBookmark = false,
+            initialColorKey = "amber",
+            initialNote = "",
+            canDelete = false,
+            onSave = { colorKey, note ->
+                viewModel.addHighlight(
+                    paragraphIndex = located.paragraphIndex,
+                    quoteText = located.quoteText,
+                    startOffset = located.startOffset,
+                    endOffset = located.endOffset,
+                    colorKey = colorKey,
+                    note = note
+                )
+                pendingNoteSelection = null
+            },
+            onDismiss = { pendingNoteSelection = null }
+        )
+    }
+
+    editingAnnotation?.let { ann ->
+        val isBookmark = ann.type == NovelAnnotationEntity.TYPE_BOOKMARK
+        AnnotationEditorSheet(
+            title = if (isBookmark) "Bookmark Note" else "Edit Highlight & Note",
+            quoteText = ann.quoteText,
+            isBookmark = isBookmark,
+            initialColorKey = ann.colorKey,
+            initialNote = ann.note,
+            canDelete = true,
+            onSave = { colorKey, note ->
+                viewModel.updateAnnotation(ann.copy(colorKey = colorKey, note = note.trim()))
+                editingAnnotation = null
+            },
+            onDelete = {
+                viewModel.deleteAnnotation(ann.id)
+                editingAnnotation = null
+            },
+            onDismiss = { editingAnnotation = null }
+        )
+    }
+
     // Appearance Modal Bottom Sheet
     if (showSettingsSheet) {
         ReaderSettingsBottomSheet(
@@ -792,15 +1088,27 @@ fun ReaderScreen(
 }
 
 /**
- * Chapter list that slides in from the left. Opens at the current chapter, dims read chapters,
- * and has search (also accepts a chapter number), jump-to-current and hide-read buttons.
+ * Editorial drawer sliding in from the left with Chapters, Bookmarks & Notes, and Full-Novel Search tabs.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChapterDrawerContent(
     chapters: List<ChapterSummary>,
     currentChapterId: String?,
+    annotations: List<NovelAnnotationEntity>,
+    searchQuery: String,
+    searchResults: List<NovelSearchHit>,
+    isSearching: Boolean,
+    selectedTab: Int,
+    onSelectTab: (Int) -> Unit,
     isOpen: Boolean,
-    onChapterClick: (String) -> Unit
+    onChapterClick: (String) -> Unit,
+    onAnnotationClick: (NovelAnnotationEntity) -> Unit,
+    onEditAnnotation: (NovelAnnotationEntity) -> Unit,
+    onDeleteAnnotation: (NovelAnnotationEntity) -> Unit,
+    onSearchQueryChange: (String) -> Unit,
+    onClearSearch: () -> Unit,
+    onSearchHitClick: (NovelSearchHit) -> Unit
 ) {
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -823,119 +1131,196 @@ private fun ChapterDrawerContent(
 
     fun currentIndex(): Int = displayed.indexOfFirst { it.id == currentChapterId }
 
-    // Every time the list opens, show the current chapter (a few rows from the top, so you see what is next)
-    LaunchedEffect(isOpen, currentChapterId, chapters.size) {
-        if (isOpen && query.isBlank()) {
+    // Every time the Chapters tab opens, show the current chapter a few rows from the top
+    LaunchedEffect(isOpen, selectedTab, currentChapterId, chapters.size) {
+        if (isOpen && selectedTab == 0 && query.isBlank()) {
             val idx = currentIndex()
             if (idx >= 0) listState.scrollToItem((idx - 4).coerceAtLeast(0))
         }
     }
 
-    ModalDrawerSheet {
+    ModalDrawerSheet(
+        drawerContainerColor = MaterialTheme.colorScheme.surface
+    ) {
         Column(modifier = Modifier.fillMaxHeight()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
+            SecondaryTabRow(
+                selectedTabIndex = selectedTab.coerceIn(0, 2),
+                containerColor = MaterialTheme.colorScheme.surface
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Chapters",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                    )
-                    Text(
-                        text = "$readCount of ${chapters.size} read",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = {
-                    searching = !searching
-                    if (!searching) query = ""
-                }) {
-                    Icon(
-                        imageVector = if (searching) Icons.Default.Close else Icons.Default.Search,
-                        contentDescription = "Search chapters"
-                    )
-                }
-                IconButton(onClick = {
-                    query = ""
-                    searching = false
-                    scope.launch {
-                        val idx = chapters.indexOfFirst { it.id == currentChapterId }
-                        if (idx >= 0) listState.animateScrollToItem(idx)
-                    }
-                }) {
-                    Icon(Icons.Default.MyLocation, contentDescription = "Go to current chapter")
-                }
-                IconButton(onClick = { hideRead = !hideRead }) {
-                    Icon(
-                        imageVector = Icons.Default.FilterList,
-                        contentDescription = if (hideRead) "Show read chapters" else "Hide read chapters",
-                        tint = if (hideRead) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            if (searching) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = { Text("Search or type a chapter number") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    shape = RoundedCornerShape(10.dp)
+                Tab(
+                    selected = selectedTab == 0,
+                    onClick = { onSelectTab(0) },
+                    text = { Text("Chapters", maxLines = 1) },
+                    modifier = Modifier.testTag("reader_drawer_tab_chapters")
+                )
+                Tab(
+                    selected = selectedTab == 1,
+                    onClick = { onSelectTab(1) },
+                    text = {
+                        Text(
+                            text = if (annotations.isNotEmpty()) "Notes (${annotations.size})" else "Notes",
+                            maxLines = 1
+                        )
+                    },
+                    modifier = Modifier.testTag("reader_drawer_tab_notes")
+                )
+                Tab(
+                    selected = selectedTab == 2,
+                    onClick = { onSelectTab(2) },
+                    text = { Text("Search", maxLines = 1) },
+                    modifier = Modifier.testTag("reader_drawer_tab_search")
                 )
             }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+            if (selectedTab == 0) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 18.dp, end = 6.dp, top = 12.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Table of Contents",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "$readCount of ${chapters.size} read",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = {
+                        searching = !searching
+                        if (!searching) query = ""
+                    }) {
+                        Icon(
+                            imageVector = if (searching) Icons.Default.Close else Icons.Default.Search,
+                            contentDescription = "Search chapters"
+                        )
+                    }
+                    IconButton(onClick = {
+                        query = ""
+                        searching = false
+                        scope.launch {
+                            val idx = chapters.indexOfFirst { it.id == currentChapterId }
+                            if (idx >= 0) listState.animateScrollToItem(idx)
+                        }
+                    }) {
+                        Icon(Icons.Default.MyLocation, contentDescription = "Go to current chapter")
+                    }
+                    IconButton(onClick = { hideRead = !hideRead }) {
+                        Icon(
+                            imageVector = Icons.Default.FilterList,
+                            contentDescription = if (hideRead) "Show read chapters" else "Hide read chapters",
+                            tint = if (hideRead) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
 
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                items(items = displayed, key = { it.id }) { ch ->
-                    val isCurrent = ch.id == currentChapterId
-                    Row(
+                if (searching) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = { Text("Search or type a chapter number") },
+                        singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(
-                                if (isCurrent) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    items(items = displayed, key = { it.id }) { ch ->
+                        val isCurrent = ch.id == currentChapterId
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    if (isCurrent) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                                )
+                                .clickable { onChapterClick(ch.id) }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = ch.title.ifBlank { "Chapter ${ch.orderIndex + 1}" },
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                    color = when {
+                                        isCurrent -> MaterialTheme.colorScheme.onPrimaryContainer
+                                        ch.read -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                        else -> MaterialTheme.colorScheme.onSurface
+                                    }
+                                ),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
                             )
-                            .clickable { onChapterClick(ch.id) }
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = ch.title.ifBlank { "Chapter ${ch.orderIndex + 1}" },
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                color = when {
-                                    isCurrent -> MaterialTheme.colorScheme.onPrimaryContainer
-                                    ch.read -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                    else -> MaterialTheme.colorScheme.onSurface
-                                }
-                            ),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (isCurrent) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = "Current chapter",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
+                            if (isCurrent) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Current chapter",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }
+            } else if (selectedTab == 1) {
+                ReaderAnnotationsList(
+                    annotations = annotations,
+                    chapters = chapters,
+                    onAnnotationClick = onAnnotationClick,
+                    onEditAnnotation = onEditAnnotation,
+                    onDeleteAnnotation = onDeleteAnnotation,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                )
+            } else {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    placeholder = { Text("Search entire novel…") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = onClearSearch) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .testTag("reader_drawer_search_input")
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                NovelSearchResultsList(
+                    query = searchQuery,
+                    results = searchResults,
+                    isSearching = isSearching,
+                    showNovelTitle = false,
+                    emptyPrompt = "Find any phrase, name, or scene across all chapters in this novel.",
+                    onHitClick = onSearchHitClick,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                )
             }
         }
     }
@@ -946,11 +1331,14 @@ private fun ReaderParagraphItem(
     paraIndex: Int,
     text: String,
     sentences: List<SentenceSpan>,
+    paragraphAnnotations: List<NovelAnnotationEntity>,
+    readerTheme: String,
     highlightStateFlow: StateFlow<TtsHighlightState>,
     highlightColor: Color,
     textStyle: TextStyle,
     maxWidth: Dp,
     onClick: () -> Unit,
+    onAnnotationClick: (NovelAnnotationEntity) -> Unit,
     onDoubleTapSentence: (sentenceStartOffset: Int) -> Unit,
     onSentenceBoundsMeasured: (paraIndex: Int, sentenceTop: Float, sentenceBottom: Float) -> Unit,
     modifier: Modifier = Modifier
@@ -964,6 +1352,18 @@ private fun ReaderParagraphItem(
             }
         }.distinctUntilChanged()
     }.collectAsStateWithLifecycle(initialValue = null)
+
+    val bookmarkAnnotation = remember(paragraphAnnotations) {
+        paragraphAnnotations.firstOrNull { it.type == NovelAnnotationEntity.TYPE_BOOKMARK }
+    }
+    val resolvedHighlights = remember(text, paragraphAnnotations, readerTheme) {
+        paragraphAnnotations
+            .filter { it.type == NovelAnnotationEntity.TYPE_HIGHLIGHT }
+            .mapNotNull { ann ->
+                val range = resolveHighlightRange(text, ann) ?: return@mapNotNull null
+                Triple(ann, range, highlightWashColor(ann.colorKey, readerTheme))
+            }
+    }
 
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
@@ -985,46 +1385,102 @@ private fun ReaderParagraphItem(
         }
     }
 
-    Box(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .widthIn(max = maxWidth)
             .padding(bottom = 12.dp)
-            .pointerInput(text, sentences) {
-                detectTapGestures(
-                    onTap = { onClick() },
-                    onDoubleTap = { tapOffset ->
-                        val layout = textLayoutResult
-                        if (layout != null) {
-                            val charOffset = layout.getOffsetForPosition(tapOffset)
-                            val sentence = SentenceSplitter.findSentence(sentences, charOffset)
-                            val targetStart = sentence?.start ?: charOffset
-                            onDoubleTapSentence(targetStart)
-                        } else {
-                            onDoubleTapSentence(0)
-                        }
-                    }
-                )
-            }
     ) {
-        // The highlight is DRAWN behind the text instead of being baked into an AnnotatedString.
-        // Changing the AnnotatedString forced a full text re-measure/re-layout of the paragraph on
-        // the main thread at every new sentence (the scroll jank). Drawing only invalidates draw.
-        Text(
-            text = text,
-            style = textStyle,
-            onTextLayout = { textLayoutResult = it },
+        if (bookmarkAnnotation != null) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
+                modifier = Modifier
+                    .padding(bottom = 4.dp)
+                    .clickable { onAnnotationClick(bookmarkAnnotation) }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Bookmark,
+                        contentDescription = "Bookmarked paragraph",
+                        tint = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Text(
+                        text = bookmarkAnnotation.note.ifBlank { "Bookmarked · Tap to add note" },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .drawBehind {
-                    val range = highlightRange ?: return@drawBehind
-                    val layout = textLayoutResult ?: return@drawBehind
-                    val start = range.first.coerceIn(0, text.length)
-                    val end = range.second.coerceIn(start, text.length)
-                    if (end > start) {
-                        drawPath(layout.getPathForRange(start, end), highlightColor)
-                    }
+                .pointerInput(text, sentences, resolvedHighlights) {
+                    detectTapGestures(
+                        onTap = { tapOffset ->
+                            val layout = textLayoutResult
+                            if (layout != null && resolvedHighlights.isNotEmpty()) {
+                                val charOffset = layout.getOffsetForPosition(tapOffset)
+                                val hit = resolvedHighlights.firstOrNull { (_, range, _) ->
+                                    charOffset in range
+                                }
+                                if (hit != null) {
+                                    onAnnotationClick(hit.first)
+                                    return@detectTapGestures
+                                }
+                            }
+                            onClick()
+                        },
+                        onDoubleTap = { tapOffset ->
+                            val layout = textLayoutResult
+                            if (layout != null) {
+                                val charOffset = layout.getOffsetForPosition(tapOffset)
+                                val sentence = SentenceSplitter.findSentence(sentences, charOffset)
+                                val targetStart = sentence?.start ?: charOffset
+                                onDoubleTapSentence(targetStart)
+                            } else {
+                                onDoubleTapSentence(0)
+                            }
+                        }
+                    )
                 }
-        )
+        ) {
+            // Highlights are DRAWN behind the text instead of being baked into an AnnotatedString.
+            // Drawing only invalidates draw and avoids text re-measure/re-layout jank while scrolling.
+            Text(
+                text = text,
+                style = textStyle,
+                onTextLayout = { textLayoutResult = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .drawBehind {
+                        val layout = textLayoutResult ?: return@drawBehind
+                        for ((_, userRange, washColor) in resolvedHighlights) {
+                            val start = userRange.first.coerceIn(0, text.length)
+                            val end = (userRange.last + 1).coerceIn(start, text.length)
+                            if (end > start) {
+                                drawPath(layout.getPathForRange(start, end), washColor)
+                            }
+                        }
+                        val ttsRange = highlightRange
+                        if (ttsRange != null) {
+                            val start = ttsRange.first.coerceIn(0, text.length)
+                            val end = ttsRange.second.coerceIn(start, text.length)
+                            if (end > start) {
+                                drawPath(layout.getPathForRange(start, end), highlightColor)
+                            }
+                        }
+                    }
+            )
+        }
     }
 }

@@ -3,8 +3,10 @@ package com.example.ui.screens.reader
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.entities.ChapterEntity
+import com.example.data.database.entities.NovelAnnotationEntity
 import com.example.data.database.entities.NovelEntity
 import com.example.data.model.ChapterSummary
+import com.example.data.model.NovelSearchHit
 import com.example.data.model.ReaderSettings
 import com.example.data.preferences.SettingsDataStore
 import com.example.data.repository.NovelRepository
@@ -12,6 +14,7 @@ import com.example.tts.TtsManager
 import com.example.tts.edge.EdgeProgress
 import com.example.tts.TtsPlaybackInfo
 import com.example.tts.TtsHighlightState
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -20,11 +23,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -32,13 +37,15 @@ sealed class ReaderEvent {
     data class ShowToast(val message: String) : ReaderEvent()
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ReaderViewModel(
     val novelId: String,
     initialChapterId: String,
     private val repository: NovelRepository,
     private val settingsDataStore: SettingsDataStore,
     private val ttsManager: TtsManager,
-    val autoPlayTtsOnLoad: Boolean = false
+    val autoPlayTtsOnLoad: Boolean = false,
+    private val initialParagraphOverride: Int? = null
 ) : ViewModel() {
 
     private var hasAutoPlayed = false
@@ -58,6 +65,13 @@ class ReaderViewModel(
     val chaptersList: StateFlow<List<ChapterSummary>> = repository.getChapterSummaries(novelId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val novelAnnotations: StateFlow<List<NovelAnnotationEntity>> = repository.observeAnnotationsForNovel(novelId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val chapterAnnotations: StateFlow<List<NovelAnnotationEntity>> = _currentChapterId
+        .flatMapLatest { chId -> repository.observeAnnotationsForChapter(chId) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val settings: StateFlow<ReaderSettings> = settingsDataStore.settingsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ReaderSettings())
 
@@ -68,8 +82,22 @@ class ReaderViewModel(
     private val _events = MutableSharedFlow<ReaderEvent>()
     val events: SharedFlow<ReaderEvent> = _events.asSharedFlow()
 
+    private val _scrollToParagraphEvent = MutableSharedFlow<Int>(extraBufferCapacity = 1)
+    val scrollToParagraphEvent: SharedFlow<Int> = _scrollToParagraphEvent.asSharedFlow()
+
     private val _initialParagraphIndex = MutableStateFlow<Int?>(null)
     val initialParagraphIndex: StateFlow<Int?> = _initialParagraphIndex.asStateFlow()
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _searchResults = MutableStateFlow<List<NovelSearchHit>>(emptyList())
+    val searchResults: StateFlow<List<NovelSearchHit>> = _searchResults.asStateFlow()
+
+    private val _isSearching = MutableStateFlow(false)
+    val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
+
+    private var searchJob: Job? = null
 
     private var lastScrollParagraphIndex: Int = 0
     private var lastScrollIndex: Int = 0
@@ -101,7 +129,7 @@ class ReaderViewModel(
     private var loadChapterJob: Job? = null
 
     init {
-        loadChapter(initialChapterId)
+        loadChapter(initialChapterId, targetParagraphOverride = initialParagraphOverride)
         ttsManager.onNextChapterRequested = onNextRequested
         ttsManager.onPrevChapterRequested = onPrevRequested
         if (ttsManager.isPlayingChapter(novelId, initialChapterId)) {
@@ -121,17 +149,26 @@ class ReaderViewModel(
         }
     }
 
-    fun loadChapter(chapterId: String) {
+    fun loadChapter(chapterId: String, targetParagraphOverride: Int? = null) {
+        if (chapterId == _currentChapter.value?.id && targetParagraphOverride != null) {
+            _scrollToParagraphEvent.tryEmit(targetParagraphOverride.coerceAtLeast(0))
+            return
+        }
         saveCurrentPositionNow()
         loadChapterJob?.cancel()
         loadChapterJob = viewModelScope.launch {
-            loadChapterInternal(chapterId, autoPlayIfTtsActive = false)
+            loadChapterInternal(
+                chapterId = chapterId,
+                autoPlayIfTtsActive = false,
+                targetParagraphOverride = targetParagraphOverride
+            )
         }
     }
 
     private suspend fun loadChapterInternal(
         chapterId: String,
-        autoPlayIfTtsActive: Boolean = false
+        autoPlayIfTtsActive: Boolean = false,
+        targetParagraphOverride: Int? = null
     ) {
         com.example.logging.AppLogger.i("ReaderViewModel", "loadChapter: novelId=$novelId, chapterId=$chapterId")
         _currentChapterId.value = chapterId
@@ -148,6 +185,7 @@ class ReaderViewModel(
             val ttsActiveHere = ttsInfo.chapterId == chapter.id &&
                 (ttsInfo.state == com.example.tts.TtsState.PLAYING || ttsInfo.state == com.example.tts.TtsState.PAUSED)
             val targetParagraph = when {
+                targetParagraphOverride != null -> targetParagraphOverride.coerceAtLeast(0)
                 // TTS auto-advanced into this chapter and starts at paragraph 0: open at the top instead of
                 // an old saved position (that caused "opens in the middle, then scrolls up")
                 autoPlayIfTtsActive -> 0
@@ -177,6 +215,98 @@ class ReaderViewModel(
             _currentChapter.value = null
             com.example.logging.AppLogger.w("ReaderViewModel", "loadChapter: chapter not found for id=$chapterId")
         }
+    }
+
+    fun toggleBookmarkAt(paragraphIndex: Int, paragraphPreview: String) {
+        val chId = _currentChapter.value?.id ?: return
+        viewModelScope.launch {
+            val added = repository.toggleParagraphBookmark(
+                novelId = novelId,
+                chapterId = chId,
+                paragraphIndex = paragraphIndex,
+                quotePreview = paragraphPreview
+            )
+            _events.emit(
+                ReaderEvent.ShowToast(
+                    if (added) "Bookmarked paragraph ${paragraphIndex + 1}" else "Bookmark removed"
+                )
+            )
+        }
+    }
+
+    fun addHighlight(
+        paragraphIndex: Int,
+        quoteText: String,
+        startOffset: Int,
+        endOffset: Int,
+        colorKey: String,
+        note: String = ""
+    ) {
+        val chId = _currentChapter.value?.id ?: return
+        viewModelScope.launch {
+            repository.addHighlight(
+                novelId = novelId,
+                chapterId = chId,
+                paragraphIndex = paragraphIndex,
+                quoteText = quoteText,
+                startOffset = startOffset,
+                endOffset = endOffset,
+                colorKey = colorKey,
+                note = note
+            )
+            _events.emit(
+                ReaderEvent.ShowToast(if (note.isNotBlank()) "Note saved" else "Passage highlighted")
+            )
+        }
+    }
+
+    fun updateAnnotation(annotation: NovelAnnotationEntity) {
+        viewModelScope.launch {
+            repository.updateAnnotation(annotation)
+            _events.emit(ReaderEvent.ShowToast("Annotation updated"))
+        }
+    }
+
+    fun deleteAnnotation(annotationId: String) {
+        viewModelScope.launch {
+            repository.deleteAnnotation(annotationId)
+            _events.emit(ReaderEvent.ShowToast("Removed"))
+        }
+    }
+
+    fun jumpToAnnotation(annotation: NovelAnnotationEntity) {
+        loadChapter(annotation.chapterId, targetParagraphOverride = annotation.paragraphIndex)
+    }
+
+    fun updateSearchQuery(query: String) {
+        _searchQuery.value = query
+        searchJob?.cancel()
+        val trimmed = query.trim()
+        if (trimmed.length < 2) {
+            _isSearching.value = false
+            _searchResults.value = emptyList()
+            return
+        }
+        searchJob = viewModelScope.launch {
+            _isSearching.value = true
+            delay(250)
+            try {
+                _searchResults.value = repository.searchInNovel(novelId, trimmed)
+            } finally {
+                _isSearching.value = false
+            }
+        }
+    }
+
+    fun clearSearch() {
+        searchJob?.cancel()
+        _searchQuery.value = ""
+        _searchResults.value = emptyList()
+        _isSearching.value = false
+    }
+
+    fun jumpToSearchHit(hit: NovelSearchHit) {
+        loadChapter(hit.chapterId, targetParagraphOverride = hit.paragraphIndex)
     }
 
     /**

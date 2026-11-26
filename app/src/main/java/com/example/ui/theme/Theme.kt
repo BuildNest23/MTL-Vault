@@ -15,15 +15,29 @@ private val DarkColorScheme = darkColorScheme(
     onPrimary = JadeOnPrimaryDark,
     primaryContainer = JadePrimaryContainerDark,
     onPrimaryContainer = JadeOnPrimaryContainerDark,
+    secondary = OchreSecondaryDark,
+    onSecondary = OchreOnSecondaryDark,
+    secondaryContainer = OchreSecondaryContainerDark,
+    onSecondaryContainer = OchreOnSecondaryContainerDark,
+    tertiary = InkTertiaryDark,
+    onTertiary = InkOnTertiaryDark,
+    tertiaryContainer = InkTertiaryContainerDark,
+    onTertiaryContainer = InkOnTertiaryContainerDark,
     background = DarkBackground,
-    surface = DarkSurface,
-    surfaceVariant = DarkSurfaceVariant,
     onBackground = DarkText,
+    surface = DarkSurface,
     onSurface = DarkText,
+    surfaceVariant = DarkSurfaceVariant,
     onSurfaceVariant = DarkMuted,
+    surfaceContainerLowest = DarkBackground,
+    surfaceContainerLow = DarkSurfaceLow,
+    surfaceContainer = DarkSurface,
+    surfaceContainerHigh = DarkSurfaceVariant,
+    surfaceContainerHighest = DarkSurfaceHigh,
     outline = DarkBorder,
-    error = AccentRed,
-    errorContainer = AccentRedContainer
+    outlineVariant = DarkBorderSubtle,
+    error = AccentRedDark,
+    errorContainer = AccentRedContainerDark
 )
 
 private val LightColorScheme = lightColorScheme(
@@ -31,13 +45,27 @@ private val LightColorScheme = lightColorScheme(
     onPrimary = JadeOnPrimary,
     primaryContainer = JadePrimaryContainer,
     onPrimaryContainer = JadeOnPrimaryContainer,
+    secondary = OchreSecondary,
+    onSecondary = OchreOnSecondary,
+    secondaryContainer = OchreSecondaryContainer,
+    onSecondaryContainer = OchreOnSecondaryContainer,
+    tertiary = InkTertiary,
+    onTertiary = InkOnTertiary,
+    tertiaryContainer = InkTertiaryContainer,
+    onTertiaryContainer = InkOnTertiaryContainer,
     background = WarmBackground,
-    surface = WarmSurface,
-    surfaceVariant = WarmSurfaceVariant,
     onBackground = WarmText,
+    surface = WarmSurface,
     onSurface = WarmText,
+    surfaceVariant = WarmSurfaceVariant,
     onSurfaceVariant = WarmMuted,
+    surfaceContainerLowest = WarmSurface,
+    surfaceContainerLow = WarmSurfaceLow,
+    surfaceContainer = WarmBackground,
+    surfaceContainerHigh = WarmSurfaceVariant,
+    surfaceContainerHighest = WarmSurfaceHigh,
     outline = WarmBorder,
+    outlineVariant = WarmBorderSubtle,
     error = AccentRed,
     errorContainer = AccentRedContainer
 )
@@ -45,7 +73,7 @@ private val LightColorScheme = lightColorScheme(
 @Composable
 fun MtlVaultTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false, // Use our signature ClassGrid Forest Jade by default
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {

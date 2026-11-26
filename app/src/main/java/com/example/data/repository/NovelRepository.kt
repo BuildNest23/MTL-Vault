@@ -1,10 +1,17 @@
 package com.example.data.repository
 
+import com.example.data.database.AnnotationDao
 import com.example.data.database.ChapterDao
 import com.example.data.database.NovelDao
+import com.example.data.database.ShelfDao
 import com.example.data.database.entities.ChapterEntity
+import com.example.data.database.entities.NovelAnnotationEntity
 import com.example.data.database.entities.NovelEntity
+import com.example.data.database.entities.NovelShelfCrossRef
+import com.example.data.database.entities.ShelfEntity
 import com.example.data.model.ChapterSummary
+import com.example.data.model.NovelSearchEngine
+import com.example.data.model.NovelSearchHit
 import com.example.data.model.NovelSummary
 import com.example.data.preferences.SettingsDataStore
 import com.example.importexport.BackupRestoreManager
@@ -15,6 +22,7 @@ import com.example.replacement.ReplacementEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import androidx.room.withTransaction
 import com.example.data.database.AppDatabase
 import kotlinx.coroutines.withContext
@@ -24,7 +32,9 @@ class NovelRepository(
     private val novelDao: NovelDao,
     private val chapterDao: ChapterDao,
     private val settingsDataStore: SettingsDataStore,
-    private val database: AppDatabase? = null
+    private val database: AppDatabase? = null,
+    private val annotationDao: AnnotationDao? = null,
+    private val shelfDao: ShelfDao? = null
 ) {
 
     /** Runs [block] in one database transaction when a database is available. */
@@ -366,6 +376,227 @@ class NovelRepository(
         "Chapter $nextNum"
     }
 
+    // Bookmarks, Highlights & Reading Notes
+    fun observeAnnotationsForNovel(novelId: String): Flow<List<NovelAnnotationEntity>> =
+        annotationDao?.observeForNovel(novelId) ?: flowOf(emptyList())
+
+    fun observeAnnotationsForChapter(chapterId: String): Flow<List<NovelAnnotationEntity>> =
+        annotationDao?.observeForChapter(chapterId) ?: flowOf(emptyList())
+
+    fun observeAnnotationCount(novelId: String): Flow<Int> =
+        annotationDao?.observeCountForNovel(novelId) ?: flowOf(0)
+
+    /**
+     * Toggles a bookmark on a paragraph. Returns true if a bookmark was created, false if removed.
+     */
+    suspend fun toggleParagraphBookmark(
+        novelId: String,
+        chapterId: String,
+        paragraphIndex: Int,
+        quotePreview: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        val dao = annotationDao ?: return@withContext false
+        val existing = dao.findAtParagraph(chapterId, paragraphIndex, NovelAnnotationEntity.TYPE_BOOKMARK)
+        if (existing != null) {
+            dao.deleteById(existing.id)
+            false
+        } else {
+            val now = System.currentTimeMillis()
+            dao.upsert(
+                NovelAnnotationEntity(
+                    id = "bm_${now}_${UUID.randomUUID().toString().take(6)}",
+                    novelId = novelId,
+                    chapterId = chapterId,
+                    paragraphIndex = paragraphIndex.coerceAtLeast(0),
+                    type = NovelAnnotationEntity.TYPE_BOOKMARK,
+                    quoteText = quotePreview.trim().take(240),
+                    colorKey = "amber",
+                    note = "",
+                    createdAt = now,
+                    updatedAt = now
+                )
+            )
+            true
+        }
+    }
+
+    suspend fun addHighlight(
+        novelId: String,
+        chapterId: String,
+        paragraphIndex: Int,
+        quoteText: String,
+        startOffset: Int,
+        endOffset: Int,
+        colorKey: String = "amber",
+        note: String = ""
+    ): NovelAnnotationEntity = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val entity = NovelAnnotationEntity(
+            id = "hl_${now}_${UUID.randomUUID().toString().take(6)}",
+            novelId = novelId,
+            chapterId = chapterId,
+            paragraphIndex = paragraphIndex.coerceAtLeast(0),
+            type = NovelAnnotationEntity.TYPE_HIGHLIGHT,
+            quoteText = quoteText.trim(),
+            startOffset = startOffset.coerceAtLeast(0),
+            endOffset = endOffset.coerceAtLeast(0),
+            colorKey = colorKey,
+            note = note.trim(),
+            createdAt = now,
+            updatedAt = now
+        )
+        annotationDao?.upsert(entity)
+        entity
+    }
+
+    suspend fun updateAnnotation(annotation: NovelAnnotationEntity) = withContext(Dispatchers.IO) {
+        annotationDao?.upsert(annotation.copy(updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun deleteAnnotation(annotationId: String) = withContext(Dispatchers.IO) {
+        annotationDao?.deleteById(annotationId)
+    }
+
+    // Custom Library Shelves
+    fun observeShelves(): Flow<List<ShelfEntity>> =
+        shelfDao?.observeShelves() ?: flowOf(emptyList())
+
+    fun observeShelfMemberships(): Flow<List<NovelShelfCrossRef>> =
+        shelfDao?.observeAllMemberships() ?: flowOf(emptyList())
+
+    fun observeShelfIdsForNovel(novelId: String): Flow<List<String>> =
+        shelfDao?.observeShelfIdsForNovel(novelId) ?: flowOf(emptyList())
+
+    suspend fun createShelf(name: String): ShelfEntity? = withContext(Dispatchers.IO) {
+        val dao = shelfDao ?: return@withContext null
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return@withContext null
+        val now = System.currentTimeMillis()
+        val nextOrder = (dao.getMaxSortOrder() ?: -1) + 1
+        val shelf = ShelfEntity(
+            id = "shelf_${now}_${UUID.randomUUID().toString().take(6)}",
+            name = trimmed.take(40),
+            sortOrder = nextOrder,
+            createdAt = now
+        )
+        dao.upsertShelf(shelf)
+        shelf
+    }
+
+    suspend fun renameShelf(shelfId: String, newName: String) = withContext(Dispatchers.IO) {
+        val trimmed = newName.trim()
+        if (trimmed.isBlank()) return@withContext
+        shelfDao?.renameShelf(shelfId, trimmed.take(40))
+    }
+
+    suspend fun deleteShelf(shelfId: String) = withContext(Dispatchers.IO) {
+        shelfDao?.deleteShelf(shelfId)
+    }
+
+    /**
+     * Toggles a novel's membership in a custom shelf. Returns true if added, false if removed.
+     */
+    suspend fun toggleNovelShelf(novelId: String, shelfId: String): Boolean = withContext(Dispatchers.IO) {
+        val dao = shelfDao ?: return@withContext false
+        val exists = dao.membershipCount(novelId, shelfId) > 0
+        if (exists) {
+            dao.removeNovelFromShelf(novelId, shelfId)
+            false
+        } else {
+            dao.addNovelToShelf(NovelShelfCrossRef(novelId = novelId, shelfId = shelfId))
+            true
+        }
+    }
+
+    // Full-Novel & Library-Wide Chapter Search
+    suspend fun searchInNovel(
+        novelId: String,
+        query: String,
+        maxHits: Int = 100
+    ): List<NovelSearchHit> = withContext(Dispatchers.Default) {
+        val needle = query.trim()
+        if (needle.isEmpty()) return@withContext emptyList()
+        val novel = novelDao.getNovelByIdSync(novelId) ?: return@withContext emptyList()
+        val settings = settingsDataStore.settingsFlow.first()
+        val rulesActive = novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()
+        val rules = if (rulesActive) ReplacementEngine.parseRules(novel.replacements) else emptyList()
+
+        // If replacement rules are active, scan all chapters so replaced character/term names match.
+        val candidateChapters = if (rulesActive) {
+            chapterDao.getChaptersForNovelSync(novelId)
+        } else {
+            chapterDao.searchChaptersInNovel(novelId, NovelSearchEngine.toLikePattern(needle))
+        }
+
+        val results = mutableListOf<NovelSearchHit>()
+        for (chapter in candidateChapters) {
+            if (results.size >= maxHits) break
+            val rendered = renderForExport(chapter.content, rules)
+            val hits = NovelSearchEngine.searchChapterText(
+                novelId = novel.id,
+                novelTitle = novel.title,
+                chapterId = chapter.id,
+                chapterTitle = chapter.title,
+                chapterOrder = chapter.orderIndex,
+                renderedContent = rendered,
+                query = needle,
+                maxHitsPerChapter = 5
+            )
+            for (hit in hits) {
+                if (results.size >= maxHits) break
+                results.add(hit)
+            }
+        }
+        results
+    }
+
+    suspend fun searchChaptersGlobal(
+        query: String,
+        maxHits: Int = 80
+    ): List<NovelSearchHit> = withContext(Dispatchers.Default) {
+        val needle = query.trim()
+        if (needle.isEmpty()) return@withContext emptyList()
+
+        val novelsById = novelDao.getAllNovels().first().associateBy { it.id }
+        if (novelsById.isEmpty()) return@withContext emptyList()
+
+        val settings = settingsDataStore.settingsFlow.first()
+        val candidates = chapterDao.searchChaptersAcrossLibrary(
+            pattern = NovelSearchEngine.toLikePattern(needle),
+            limit = 120
+        )
+
+        val rulesCache = HashMap<String, List<com.example.replacement.ReplacementRule>>()
+        val results = mutableListOf<NovelSearchHit>()
+        for (chapter in candidates) {
+            if (results.size >= maxHits) break
+            val novel = novelsById[chapter.novelId] ?: continue
+            val rules = rulesCache.getOrPut(novel.id) {
+                if (novel.replacementsEnabled && settings.replacementsEnabled && novel.replacements.isNotBlank()) {
+                    ReplacementEngine.parseRules(novel.replacements)
+                } else {
+                    emptyList()
+                }
+            }
+            val rendered = renderForExport(chapter.content, rules)
+            val hits = NovelSearchEngine.searchChapterText(
+                novelId = novel.id,
+                novelTitle = novel.title,
+                chapterId = chapter.id,
+                chapterTitle = chapter.title,
+                chapterOrder = chapter.orderIndex,
+                renderedContent = rendered,
+                query = needle,
+                maxHitsPerChapter = 3
+            )
+            for (hit in hits) {
+                if (results.size >= maxHits) break
+                results.add(hit)
+            }
+        }
+        results
+    }
+
     /**
      * Writes the whole library to [out] without ever holding more than one novel in memory.
      * [readCover] gives the bytes of a saved cover picture so it is included in the backup.
@@ -373,12 +604,17 @@ class NovelRepository(
     suspend fun writeBackup(out: java.io.OutputStream, readCover: (String) -> ByteArray?) = withContext(Dispatchers.IO) {
         val novels = novelDao.getAllNovels().first()
         val settings = settingsDataStore.settingsFlow.first()
+        val shelves = shelfDao?.getAllShelvesSync() ?: emptyList()
+        val memberships = shelfDao?.getAllMembershipsSync() ?: emptyList()
         BackupRestoreManager.writeBackupStream(
             out = out,
             novels = novels,
             settings = settings,
             loadChapters = { id -> chapterDao.getChaptersForNovelSync(id) },
-            readCover = readCover
+            readCover = readCover,
+            loadAnnotations = { id -> annotationDao?.getForNovelSync(id) ?: emptyList() },
+            shelves = shelves,
+            shelfMemberships = memberships
         )
     }
 
@@ -393,12 +629,29 @@ class NovelRepository(
     ) = withContext(Dispatchers.IO) {
         var restoredSettings: com.example.data.model.ReaderSettings? = null
         val performDbRestore: suspend () -> Unit = {
+            shelfDao?.deleteAllMemberships()
+            shelfDao?.deleteAllShelves()
+            annotationDao?.deleteAll()
             chapterDao.deleteAllChapters()
             novelDao.deleteAllNovels()
-            restoredSettings = BackupRestoreManager.readBackupStream(input, saveCover) { item ->
+            restoredSettings = BackupRestoreManager.readBackupStream(
+                input = input,
+                saveCover = saveCover,
+                onShelves = { shelves, memberships ->
+                    if (shelves.isNotEmpty()) {
+                        shelfDao?.insertShelves(shelves)
+                    }
+                    if (memberships.isNotEmpty()) {
+                        memberships.chunked(200).forEach { shelfDao?.insertMemberships(it) }
+                    }
+                }
+            ) { item ->
                 novelDao.insertNovel(item.novel)
                 // Insert in slices so a huge novel never builds one enormous SQL batch
                 item.chapters.chunked(200).forEach { chapterDao.insertChapters(it) }
+                if (item.annotations.isNotEmpty()) {
+                    item.annotations.chunked(200).forEach { annotationDao?.insertAll(it) }
+                }
             }
         }
         if (database != null) {
@@ -426,6 +679,9 @@ class NovelRepository(
 
     suspend fun resetAllData() = withContext(Dispatchers.IO) {
         val runBlock: suspend () -> Unit = {
+            shelfDao?.deleteAllMemberships()
+            shelfDao?.deleteAllShelves()
+            annotationDao?.deleteAll()
             chapterDao.deleteAllChapters()
             novelDao.deleteAllNovels()
         }

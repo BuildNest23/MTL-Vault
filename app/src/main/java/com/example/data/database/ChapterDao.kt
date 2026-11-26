@@ -102,4 +102,18 @@ interface ChapterDao {
     @Query("SELECT COALESCE(SUM(wordCount), 0) FROM chapters")
     fun getTotalWordCount(): Flow<Long>
 
+    @Query(
+        "SELECT * FROM chapters WHERE novelId = :novelId " +
+            "AND (content LIKE :pattern ESCAPE '\\' OR title LIKE :pattern ESCAPE '\\') " +
+            "ORDER BY orderIndex ASC"
+    )
+    suspend fun searchChaptersInNovel(novelId: String, pattern: String): List<ChapterEntity>
+
+    @Query(
+        "SELECT * FROM chapters " +
+            "WHERE (content LIKE :pattern ESCAPE '\\' OR title LIKE :pattern ESCAPE '\\') " +
+            "ORDER BY updatedAt DESC LIMIT :limit"
+    )
+    suspend fun searchChaptersAcrossLibrary(pattern: String, limit: Int = 120): List<ChapterEntity>
+
 }

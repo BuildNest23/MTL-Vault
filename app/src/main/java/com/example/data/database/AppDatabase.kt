@@ -12,7 +12,10 @@ import com.example.data.database.entities.AudioChapterEntity
 import com.example.data.database.entities.AudioFileEntity
 import com.example.data.database.entities.AudioListeningEntity
 import com.example.data.database.entities.ChapterEntity
+import com.example.data.database.entities.NovelAnnotationEntity
 import com.example.data.database.entities.NovelEntity
+import com.example.data.database.entities.NovelShelfCrossRef
+import com.example.data.database.entities.ShelfEntity
 
 import com.example.logging.AppLogger
 
@@ -20,19 +23,24 @@ import com.example.logging.AppLogger
     entities = [
         NovelEntity::class,
         ChapterEntity::class,
+        NovelAnnotationEntity::class,
+        ShelfEntity::class,
+        NovelShelfCrossRef::class,
         AudioBookEntity::class,
         AudioFileEntity::class,
         AudioChapterEntity::class,
         AudioBookmarkEntity::class,
         AudioListeningEntity::class
     ],
-    version = 3,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun novelDao(): NovelDao
     abstract fun chapterDao(): ChapterDao
+    abstract fun annotationDao(): AnnotationDao
+    abstract fun shelfDao(): ShelfDao
     abstract fun audioDao(): AudioDao
 
     companion object {
@@ -157,6 +165,78 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Version 3 -> 4: adds the novel_annotations table for bookmarks, highlights, and reading notes.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                AppLogger.i("Room", "Executing MIGRATION_3_4: add novel_annotations table")
+                try {
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `novel_annotations` (" +
+                            "`id` TEXT NOT NULL, " +
+                            "`novelId` TEXT NOT NULL, " +
+                            "`chapterId` TEXT NOT NULL, " +
+                            "`paragraphIndex` INTEGER NOT NULL, " +
+                            "`type` TEXT NOT NULL, " +
+                            "`quoteText` TEXT NOT NULL, " +
+                            "`startOffset` INTEGER NOT NULL, " +
+                            "`endOffset` INTEGER NOT NULL, " +
+                            "`colorKey` TEXT NOT NULL, " +
+                            "`note` TEXT NOT NULL, " +
+                            "`createdAt` INTEGER NOT NULL, " +
+                            "`updatedAt` INTEGER NOT NULL, " +
+                            "PRIMARY KEY(`id`), " +
+                            "FOREIGN KEY(`novelId`) REFERENCES `novels`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE, " +
+                            "FOREIGN KEY(`chapterId`) REFERENCES `chapters`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)"
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_novel_annotations_novelId` ON `novel_annotations` (`novelId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_novel_annotations_chapterId` ON `novel_annotations` (`chapterId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_novel_annotations_novelId_chapterId_paragraphIndex` ON `novel_annotations` (`novelId`, `chapterId`, `paragraphIndex`)")
+                    AppLogger.i("Room", "MIGRATION_3_4 completed successfully")
+                } catch (e: Exception) {
+                    AppLogger.e("Room", "MIGRATION_3_4 failed", e)
+                    throw e
+                }
+            }
+        }
+
+        /**
+         * Version 4 -> 5: adds custom library shelves and novel-shelf membership cross-reference table.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                AppLogger.i("Room", "Executing MIGRATION_4_5: add shelves and novel_shelf_cross_ref tables")
+                try {
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `shelves` (" +
+                            "`id` TEXT NOT NULL, " +
+                            "`name` TEXT NOT NULL, " +
+                            "`sortOrder` INTEGER NOT NULL, " +
+                            "`createdAt` INTEGER NOT NULL, " +
+                            "PRIMARY KEY(`id`))"
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_shelves_sortOrder` ON `shelves` (`sortOrder`)")
+
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `novel_shelf_cross_ref` (" +
+                            "`novelId` TEXT NOT NULL, " +
+                            "`shelfId` TEXT NOT NULL, " +
+                            "`addedAt` INTEGER NOT NULL, " +
+                            "PRIMARY KEY(`novelId`, `shelfId`), " +
+                            "FOREIGN KEY(`novelId`) REFERENCES `novels`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE, " +
+                            "FOREIGN KEY(`shelfId`) REFERENCES `shelves`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)"
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_novel_shelf_cross_ref_novelId` ON `novel_shelf_cross_ref` (`novelId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_novel_shelf_cross_ref_shelfId` ON `novel_shelf_cross_ref` (`shelfId`)")
+                    AppLogger.i("Room", "MIGRATION_4_5 completed successfully")
+                } catch (e: Exception) {
+                    AppLogger.e("Room", "MIGRATION_4_5 failed", e)
+                    throw e
+                }
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 // Re-check inside the lock so two racing callers can never build two databases
@@ -167,7 +247,7 @@ abstract class AppDatabase : RoomDatabase() {
                         AppDatabase::class.java,
                         "mtl_vault.db"
                     )
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 AppLogger.i("Room", "Database onCreate, version=${db.version}")

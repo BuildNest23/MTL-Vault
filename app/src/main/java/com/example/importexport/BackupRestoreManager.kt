@@ -1,7 +1,10 @@
 package com.example.importexport
 
 import com.example.data.database.entities.ChapterEntity
+import com.example.data.database.entities.NovelAnnotationEntity
 import com.example.data.database.entities.NovelEntity
+import com.example.data.database.entities.NovelShelfCrossRef
+import com.example.data.database.entities.ShelfEntity
 import com.example.data.model.ReaderSettings
 import android.util.Base64
 import android.util.JsonReader
@@ -19,19 +22,24 @@ import java.util.Locale
 
 data class BackupData(
     val novels: List<NovelWithChaptersBackup>,
-    val settings: ReaderSettings?
+    val settings: ReaderSettings?,
+    val shelves: List<ShelfEntity> = emptyList(),
+    val shelfMemberships: List<NovelShelfCrossRef> = emptyList()
 )
 
 data class NovelWithChaptersBackup(
     val novel: NovelEntity,
-    val chapters: List<ChapterEntity>
+    val chapters: List<ChapterEntity>,
+    val annotations: List<NovelAnnotationEntity> = emptyList()
 )
 
 object BackupRestoreManager {
 
     fun generateBackupJson(
         novelsWithChapters: List<NovelWithChaptersBackup>,
-        settings: ReaderSettings
+        settings: ReaderSettings,
+        shelves: List<ShelfEntity> = emptyList(),
+        shelfMemberships: List<NovelShelfCrossRef> = emptyList()
     ): String {
         val root = JSONObject()
         root.put("app", "MTLVault")
@@ -78,6 +86,25 @@ object BackupRestoreManager {
             }
             novelObj.put("chapters", chaptersArray)
             novelObj.put("progress", progressObj)
+            if (item.annotations.isNotEmpty()) {
+                val annArray = JSONArray()
+                for (ann in item.annotations) {
+                    val annObj = JSONObject()
+                    annObj.put("id", ann.id)
+                    annObj.put("chapterId", ann.chapterId)
+                    annObj.put("paragraphIndex", ann.paragraphIndex)
+                    annObj.put("type", ann.type)
+                    annObj.put("quoteText", ann.quoteText)
+                    annObj.put("startOffset", ann.startOffset)
+                    annObj.put("endOffset", ann.endOffset)
+                    annObj.put("colorKey", ann.colorKey)
+                    annObj.put("note", ann.note)
+                    annObj.put("createdAt", ann.createdAt)
+                    annObj.put("updatedAt", ann.updatedAt)
+                    annArray.put(annObj)
+                }
+                novelObj.put("annotations", annArray)
+            }
             novelsArray.put(novelObj)
         }
         dataObj.put("novels", novelsArray)
@@ -99,6 +126,31 @@ object BackupRestoreManager {
         settingsObj.put("replacementsEnabled", settings.replacementsEnabled)
         settingsObj.put("splitLongParagraphs", settings.splitLongParagraphs)
         dataObj.put("settings", settingsObj)
+
+        if (shelves.isNotEmpty()) {
+            val shelvesArray = JSONArray()
+            for (shelf in shelves) {
+                val sObj = JSONObject()
+                sObj.put("id", shelf.id)
+                sObj.put("name", shelf.name)
+                sObj.put("sortOrder", shelf.sortOrder)
+                sObj.put("createdAt", shelf.createdAt)
+                shelvesArray.put(sObj)
+            }
+            dataObj.put("shelves", shelvesArray)
+        }
+
+        if (shelfMemberships.isNotEmpty()) {
+            val membershipsArray = JSONArray()
+            for (ref in shelfMemberships) {
+                val mObj = JSONObject()
+                mObj.put("novelId", ref.novelId)
+                mObj.put("shelfId", ref.shelfId)
+                mObj.put("addedAt", ref.addedAt)
+                membershipsArray.put(mObj)
+            }
+            dataObj.put("shelfMemberships", membershipsArray)
+        }
 
         root.put("data", dataObj)
         return root.toString(2)
@@ -165,7 +217,32 @@ object BackupRestoreManager {
                         chaptersList.add(chapter)
                     }
                 }
-                novelsList.add(NovelWithChaptersBackup(novel, chaptersList))
+                val annotationsList = mutableListOf<NovelAnnotationEntity>()
+                if (novelObj.has("annotations")) {
+                    val annArray = novelObj.getJSONArray("annotations")
+                    for (k in 0 until annArray.length()) {
+                        val annObj = annArray.getJSONObject(k)
+                        val chId = annObj.optString("chapterId", "")
+                        if (chId.isBlank()) continue
+                        annotationsList.add(
+                            NovelAnnotationEntity(
+                                id = annObj.optString("id", "ann_${System.currentTimeMillis()}_$k"),
+                                novelId = novelId,
+                                chapterId = chId,
+                                paragraphIndex = annObj.optInt("paragraphIndex", 0),
+                                type = annObj.optString("type", NovelAnnotationEntity.TYPE_HIGHLIGHT),
+                                quoteText = annObj.optString("quoteText", ""),
+                                startOffset = annObj.optInt("startOffset", 0),
+                                endOffset = annObj.optInt("endOffset", 0),
+                                colorKey = annObj.optString("colorKey", "amber"),
+                                note = annObj.optString("note", ""),
+                                createdAt = annObj.optLong("createdAt", System.currentTimeMillis()),
+                                updatedAt = annObj.optLong("updatedAt", System.currentTimeMillis())
+                            )
+                        )
+                    }
+                }
+                novelsList.add(NovelWithChaptersBackup(novel, chaptersList, annotationsList))
             }
         }
 
@@ -190,7 +267,47 @@ object BackupRestoreManager {
             )
         }
 
-        return BackupData(novelsList, parsedSettings)
+        val parsedShelves = mutableListOf<ShelfEntity>()
+        if (dataObj.has("shelves")) {
+            val shelvesArray = dataObj.getJSONArray("shelves")
+            for (i in 0 until shelvesArray.length()) {
+                val sObj = shelvesArray.getJSONObject(i)
+                val shelfId = sObj.optString("id", "").trim()
+                val shelfName = sObj.optString("name", "").trim()
+                if (shelfId.isBlank() || shelfName.isBlank()) continue
+                parsedShelves.add(
+                    ShelfEntity(
+                        id = shelfId,
+                        name = shelfName,
+                        sortOrder = sObj.optInt("sortOrder", i),
+                        createdAt = sObj.optLong("createdAt", System.currentTimeMillis())
+                    )
+                )
+            }
+        }
+
+        val validNovelIds = novelsList.mapTo(HashSet()) { it.novel.id }
+        val validShelfIds = parsedShelves.mapTo(HashSet()) { it.id }
+        val parsedMemberships = mutableListOf<NovelShelfCrossRef>()
+        if (dataObj.has("shelfMemberships")) {
+            val membershipsArray = dataObj.getJSONArray("shelfMemberships")
+            for (i in 0 until membershipsArray.length()) {
+                val mObj = membershipsArray.getJSONObject(i)
+                val novelId = mObj.optString("novelId", "").trim()
+                val shelfId = mObj.optString("shelfId", "").trim()
+                if (novelId in validNovelIds && shelfId in validShelfIds) {
+                    parsedMemberships.add(
+                        NovelShelfCrossRef(
+                            novelId = novelId,
+                            shelfId = shelfId,
+                            addedAt = mObj.optLong("addedAt", System.currentTimeMillis())
+                        )
+                    )
+                }
+            }
+        }
+
+        return BackupData(novelsList, parsedSettings, parsedShelves, parsedMemberships)
     }
 
     // ====================================================================================
@@ -213,7 +330,10 @@ object BackupRestoreManager {
         novels: List<NovelEntity>,
         settings: ReaderSettings,
         loadChapters: suspend (String) -> List<ChapterEntity>,
-        readCover: (String) -> ByteArray?
+        readCover: (String) -> ByteArray?,
+        loadAnnotations: suspend (String) -> List<NovelAnnotationEntity> = { emptyList() },
+        shelves: List<ShelfEntity> = emptyList(),
+        shelfMemberships: List<NovelShelfCrossRef> = emptyList()
     ) {
         val writer = JsonWriter(OutputStreamWriter(out, Charsets.UTF_8).buffered())
         writer.beginObject()
@@ -224,6 +344,7 @@ object BackupRestoreManager {
         writer.name("novels").beginArray()
         for (novel in novels) {
             val chapters = loadChapters(novel.id)
+            val annotations = loadAnnotations(novel.id)
             writer.beginObject()
             writer.name("id").value(novel.id)
             writer.name("title").value(novel.title)
@@ -264,6 +385,25 @@ object BackupRestoreManager {
                 if (ch.scrollPosition > 0) writer.name(ch.id).value(ch.scrollPosition)
             }
             writer.endObject()
+            if (annotations.isNotEmpty()) {
+                writer.name("annotations").beginArray()
+                for (ann in annotations) {
+                    writer.beginObject()
+                    writer.name("id").value(ann.id)
+                    writer.name("chapterId").value(ann.chapterId)
+                    writer.name("paragraphIndex").value(ann.paragraphIndex)
+                    writer.name("type").value(ann.type)
+                    writer.name("quoteText").value(ann.quoteText)
+                    writer.name("startOffset").value(ann.startOffset)
+                    writer.name("endOffset").value(ann.endOffset)
+                    writer.name("colorKey").value(ann.colorKey)
+                    writer.name("note").value(ann.note)
+                    writer.name("createdAt").value(ann.createdAt)
+                    writer.name("updatedAt").value(ann.updatedAt)
+                    writer.endObject()
+                }
+                writer.endArray()
+            }
             writer.endObject()
         }
         writer.endArray()
@@ -283,6 +423,29 @@ object BackupRestoreManager {
         writer.name("replacementsEnabled").value(settings.replacementsEnabled)
         writer.name("splitLongParagraphs").value(settings.splitLongParagraphs)
         writer.endObject()
+        if (shelves.isNotEmpty()) {
+            writer.name("shelves").beginArray()
+            for (shelf in shelves) {
+                writer.beginObject()
+                writer.name("id").value(shelf.id)
+                writer.name("name").value(shelf.name)
+                writer.name("sortOrder").value(shelf.sortOrder)
+                writer.name("createdAt").value(shelf.createdAt)
+                writer.endObject()
+            }
+            writer.endArray()
+        }
+        if (shelfMemberships.isNotEmpty()) {
+            writer.name("shelfMemberships").beginArray()
+            for (ref in shelfMemberships) {
+                writer.beginObject()
+                writer.name("novelId").value(ref.novelId)
+                writer.name("shelfId").value(ref.shelfId)
+                writer.name("addedAt").value(ref.addedAt)
+                writer.endObject()
+            }
+            writer.endArray()
+        }
         writer.endObject()
         writer.endObject()
         writer.flush()
@@ -297,11 +460,15 @@ object BackupRestoreManager {
     suspend fun readBackupStream(
         input: InputStream,
         saveCover: (novelId: String, bytes: ByteArray) -> String?,
+        onShelves: suspend (List<ShelfEntity>, List<NovelShelfCrossRef>) -> Unit = { _, _ -> },
         onNovel: suspend (NovelWithChaptersBackup) -> Unit
     ): ReaderSettings? {
         val reader = JsonReader(InputStreamReader(input, Charsets.UTF_8).buffered())
         var settings: ReaderSettings? = null
         var sawNovels = false
+        val seenNovelIds = HashSet<String>()
+        val parsedShelves = mutableListOf<ShelfEntity>()
+        val parsedMemberships = mutableListOf<NovelShelfCrossRef>()
         try {
             if (reader.peek() != JsonToken.BEGIN_OBJECT) throw notABackup()
             suspend fun readData() {
@@ -313,11 +480,15 @@ object BackupRestoreManager {
                             reader.beginArray()
                             var index = 0
                             while (reader.hasNext()) {
-                                onNovel(readNovel(reader, index++, saveCover))
+                                val item = readNovel(reader, index++, saveCover)
+                                seenNovelIds.add(item.novel.id)
+                                onNovel(item)
                             }
                             reader.endArray()
                         }
                         "settings" -> settings = readSettings(reader)
+                        "shelves" -> readShelvesArray(reader, parsedShelves)
+                        "shelfMemberships" -> readShelfMembershipsArray(reader, parsedMemberships)
                         else -> reader.skipValue()
                     }
                 }
@@ -335,11 +506,15 @@ object BackupRestoreManager {
                         reader.beginArray()
                         var index = 0
                         while (reader.hasNext()) {
-                            onNovel(readNovel(reader, index++, saveCover))
+                            val item = readNovel(reader, index++, saveCover)
+                            seenNovelIds.add(item.novel.id)
+                            onNovel(item)
                         }
                         reader.endArray()
                     }
                     "settings" -> settings = readSettings(reader)
+                    "shelves" -> readShelvesArray(reader, parsedShelves)
+                    "shelfMemberships" -> readShelfMembershipsArray(reader, parsedMemberships)
                     else -> reader.skipValue()
                 }
             }
@@ -352,7 +527,84 @@ object BackupRestoreManager {
             try { reader.close() } catch (_: Exception) {}
         }
         if (!sawNovels) throw notABackup()
+        if (parsedShelves.isNotEmpty() || parsedMemberships.isNotEmpty()) {
+            val validShelfIds = parsedShelves.mapTo(HashSet()) { it.id }
+            val validMemberships = parsedMemberships.filter {
+                it.novelId in seenNovelIds && it.shelfId in validShelfIds
+            }
+            onShelves(parsedShelves, validMemberships)
+        }
         return settings
+    }
+
+    private fun readShelvesArray(reader: JsonReader, out: MutableList<ShelfEntity>) {
+        if (reader.peek() != JsonToken.BEGIN_ARRAY) {
+            reader.skipValue()
+            return
+        }
+        reader.beginArray()
+        var index = 0
+        while (reader.hasNext()) {
+            if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+                reader.skipValue()
+                continue
+            }
+            var id: String? = null
+            var name: String? = null
+            var sortOrder = index
+            var createdAt = System.currentTimeMillis()
+            reader.beginObject()
+            while (reader.hasNext()) {
+                when (reader.nextName()) {
+                    "id" -> id = reader.stringOrNull()
+                    "name" -> name = reader.stringOrNull()
+                    "sortOrder" -> sortOrder = reader.longOr(index.toLong()).toInt()
+                    "createdAt" -> createdAt = reader.longOr(createdAt)
+                    else -> reader.skipValue()
+                }
+            }
+            reader.endObject()
+            val cleanId = id?.trim().orEmpty()
+            val cleanName = name?.trim().orEmpty()
+            if (cleanId.isNotBlank() && cleanName.isNotBlank()) {
+                out.add(ShelfEntity(id = cleanId, name = cleanName, sortOrder = sortOrder, createdAt = createdAt))
+            }
+            index++
+        }
+        reader.endArray()
+    }
+
+    private fun readShelfMembershipsArray(reader: JsonReader, out: MutableList<NovelShelfCrossRef>) {
+        if (reader.peek() != JsonToken.BEGIN_ARRAY) {
+            reader.skipValue()
+            return
+        }
+        reader.beginArray()
+        while (reader.hasNext()) {
+            if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+                reader.skipValue()
+                continue
+            }
+            var novelId: String? = null
+            var shelfId: String? = null
+            var addedAt = System.currentTimeMillis()
+            reader.beginObject()
+            while (reader.hasNext()) {
+                when (reader.nextName()) {
+                    "novelId" -> novelId = reader.stringOrNull()
+                    "shelfId" -> shelfId = reader.stringOrNull()
+                    "addedAt" -> addedAt = reader.longOr(addedAt)
+                    else -> reader.skipValue()
+                }
+            }
+            reader.endObject()
+            val cleanNovelId = novelId?.trim().orEmpty()
+            val cleanShelfId = shelfId?.trim().orEmpty()
+            if (cleanNovelId.isNotBlank() && cleanShelfId.isNotBlank()) {
+                out.add(NovelShelfCrossRef(novelId = cleanNovelId, shelfId = cleanShelfId, addedAt = addedAt))
+            }
+        }
+        reader.endArray()
     }
 
     private fun notABackup() =
@@ -403,6 +655,7 @@ object BackupRestoreManager {
         var updatedAt = System.currentTimeMillis()
         var progress: Map<String, Int>? = null
         val rawChapters = mutableListOf<ChapterEntity>()
+        val rawAnnotations = mutableListOf<NovelAnnotationEntity>()
 
         reader.beginObject()
         while (reader.hasNext()) {
@@ -438,6 +691,16 @@ object BackupRestoreManager {
                         rawChapters.add(readChapter(reader, j++))
                     }
                     reader.endArray()
+                }
+                "annotations" -> {
+                    if (reader.peek() == JsonToken.BEGIN_ARRAY) {
+                        reader.beginArray()
+                        var k = 0
+                        while (reader.hasNext()) {
+                            readAnnotation(reader, k++)?.let { rawAnnotations.add(it) }
+                        }
+                        reader.endArray()
+                    } else reader.skipValue()
                 }
                 else -> reader.skipValue()
             }
@@ -479,7 +742,63 @@ object BackupRestoreManager {
                 scrollPosition = if (progressMap != null) (progressMap[ch.id] ?: 0) else ch.scrollPosition
             )
         }
-        return NovelWithChaptersBackup(novel, chapters)
+        val validChapterIds = chapters.mapTo(HashSet()) { it.id }
+        val annotations = rawAnnotations
+            .filter { it.chapterId in validChapterIds }
+            .map { it.copy(novelId = novelId) }
+        return NovelWithChaptersBackup(novel, chapters, annotations)
+    }
+
+    private fun readAnnotation(reader: JsonReader, index: Int): NovelAnnotationEntity? {
+        if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+            reader.skipValue()
+            return null
+        }
+        var id: String? = null
+        var chapterId = ""
+        var paragraphIndex = 0
+        var type = NovelAnnotationEntity.TYPE_HIGHLIGHT
+        var quoteText = ""
+        var startOffset = 0
+        var endOffset = 0
+        var colorKey = "amber"
+        var note = ""
+        var createdAt = System.currentTimeMillis()
+        var updatedAt = System.currentTimeMillis()
+
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "id" -> id = reader.stringOrNull()
+                "chapterId" -> chapterId = reader.stringOrNull() ?: ""
+                "paragraphIndex" -> paragraphIndex = reader.longOr(0).toInt()
+                "type" -> type = reader.stringOrNull() ?: type
+                "quoteText" -> quoteText = reader.stringOrNull() ?: ""
+                "startOffset" -> startOffset = reader.longOr(0).toInt()
+                "endOffset" -> endOffset = reader.longOr(0).toInt()
+                "colorKey" -> colorKey = reader.stringOrNull() ?: colorKey
+                "note" -> note = reader.stringOrNull() ?: ""
+                "createdAt" -> createdAt = reader.longOr(createdAt)
+                "updatedAt" -> updatedAt = reader.longOr(updatedAt)
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+        if (chapterId.isBlank()) return null
+        return NovelAnnotationEntity(
+            id = id?.takeIf { it.isNotBlank() } ?: "ann_${System.currentTimeMillis()}_$index",
+            novelId = "",
+            chapterId = chapterId,
+            paragraphIndex = paragraphIndex.coerceAtLeast(0),
+            type = type,
+            quoteText = quoteText,
+            startOffset = startOffset.coerceAtLeast(0),
+            endOffset = endOffset.coerceAtLeast(0),
+            colorKey = colorKey,
+            note = note,
+            createdAt = createdAt,
+            updatedAt = updatedAt
+        )
     }
 
     private fun readChapter(reader: JsonReader, j: Int): ChapterEntity {

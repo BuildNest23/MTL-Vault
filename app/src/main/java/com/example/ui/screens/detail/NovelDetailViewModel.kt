@@ -5,14 +5,19 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.CoverStorage
+import com.example.data.database.entities.NovelAnnotationEntity
 import com.example.data.database.entities.NovelEntity
+import com.example.data.database.entities.ShelfEntity
 import com.example.data.model.ChapterSummary
+import com.example.data.model.NovelSearchHit
 import com.example.data.model.ReaderSettings
 import com.example.data.preferences.SettingsDataStore
 import com.example.data.repository.NovelRepository
 import com.example.importexport.ChapterSplitter
 import com.example.tts.VoiceCastStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -46,6 +51,15 @@ class NovelDetailViewModel(
         .onEach { _chaptersLoaded.value = true }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val annotations: StateFlow<List<NovelAnnotationEntity>> = repository.observeAnnotationsForNovel(novelId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val shelves: StateFlow<List<ShelfEntity>> = repository.observeShelves()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val novelShelfIds: StateFlow<List<String>> = repository.observeShelfIdsForNovel(novelId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val settings: StateFlow<ReaderSettings> = settingsDataStore?.settingsFlow
         ?.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ReaderSettings())
         ?: MutableStateFlow(ReaderSettings()).asStateFlow()
@@ -65,6 +79,60 @@ class NovelDetailViewModel(
 
     private val _pendingImportText = MutableStateFlow<String?>(null)
     val pendingImportText: StateFlow<String?> = _pendingImportText.asStateFlow()
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _searchResults = MutableStateFlow<List<NovelSearchHit>>(emptyList())
+    val searchResults: StateFlow<List<NovelSearchHit>> = _searchResults.asStateFlow()
+
+    private val _isSearching = MutableStateFlow(false)
+    val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
+
+    private var searchJob: Job? = null
+
+    fun updateSearchQuery(query: String) {
+        _searchQuery.value = query
+        searchJob?.cancel()
+        val trimmed = query.trim()
+        if (trimmed.length < 2) {
+            _isSearching.value = false
+            _searchResults.value = emptyList()
+            return
+        }
+        searchJob = viewModelScope.launch {
+            _isSearching.value = true
+            delay(250)
+            try {
+                _searchResults.value = repository.searchInNovel(novelId, trimmed)
+            } finally {
+                _isSearching.value = false
+            }
+        }
+    }
+
+    fun clearSearch() {
+        searchJob?.cancel()
+        _searchQuery.value = ""
+        _searchResults.value = emptyList()
+        _isSearching.value = false
+    }
+
+    fun toggleShelf(shelfId: String) {
+        viewModelScope.launch {
+            repository.toggleNovelShelf(novelId, shelfId)
+        }
+    }
+
+    fun createShelfAndAssign(name: String) {
+        viewModelScope.launch {
+            val created = repository.createShelf(name)
+            if (created != null) {
+                repository.toggleNovelShelf(novelId, created.id)
+                _events.emit(DetailEvent.ShowToast("Added to \"${created.name}\"."))
+            }
+        }
+    }
 
     fun toggleHideReadChapters() {
         viewModelScope.launch {
@@ -127,6 +195,20 @@ class NovelDetailViewModel(
         }
     }
 
+    fun updateAnnotation(annotation: NovelAnnotationEntity) {
+        viewModelScope.launch {
+            repository.updateAnnotation(annotation)
+            _events.emit(DetailEvent.ShowToast("Note saved"))
+        }
+    }
+
+    fun deleteAnnotation(annotationId: String) {
+        viewModelScope.launch {
+            repository.deleteAnnotation(annotationId)
+            _events.emit(DetailEvent.ShowToast("Annotation removed"))
+        }
+    }
+
     /**
      * Saves everything from the Edit novel window: title, author, translator, description and cover.
      *
@@ -158,12 +240,14 @@ class NovelDetailViewModel(
                 }
                 if (saved != null) {
                     withContext(Dispatchers.IO) { CoverStorage.deleteOwnCover(appContext, current.coverUri) }
+                    com.example.ui.components.evictNovelCoverCache(current.coverUri)
                     coverUri = saved
                 } else {
                     coverProblem = true
                 }
             } else if (removeCover) {
                 withContext(Dispatchers.IO) { CoverStorage.deleteOwnCover(appContext, current.coverUri) }
+                com.example.ui.components.evictNovelCoverCache(current.coverUri)
                 coverUri = null
             }
 
