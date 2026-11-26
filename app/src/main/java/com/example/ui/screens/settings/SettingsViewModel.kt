@@ -8,7 +8,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.ReaderSettings
 import com.example.data.preferences.SettingsDataStore
+import com.example.data.repository.AudioRepository
 import com.example.data.repository.NovelRepository
+import com.example.ui.theme.AppAppearance
+import com.example.ui.theme.AppFontPreset
+import com.example.ui.theme.AppThemeMode
+import com.example.ui.theme.MattePalette
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -37,7 +42,8 @@ sealed class SettingsEvent {
 class SettingsViewModel(
     private val repository: NovelRepository,
     private val settingsDataStore: SettingsDataStore,
-    private val ttsManager: TtsManager? = null
+    private val ttsManager: TtsManager? = null,
+    private val audioRepository: AudioRepository? = null
 ) : ViewModel() {
 
     val settings: StateFlow<ReaderSettings> = settingsDataStore.settingsFlow
@@ -46,9 +52,30 @@ class SettingsViewModel(
     val dynamicColor: StateFlow<Boolean> = settingsDataStore.dynamicColorFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
+    val appAppearance: StateFlow<AppAppearance> = settingsDataStore.appAppearanceFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppAppearance())
+
     fun updateDynamicColor(enabled: Boolean) {
         viewModelScope.launch {
             settingsDataStore.updateDynamicColor(enabled)
+        }
+    }
+
+    fun updateAppThemeMode(mode: AppThemeMode) {
+        viewModelScope.launch {
+            settingsDataStore.updateAppThemeMode(mode)
+        }
+    }
+
+    fun updateMattePalette(palette: MattePalette) {
+        viewModelScope.launch {
+            settingsDataStore.updateMattePalette(palette)
+        }
+    }
+
+    fun updateAppFontPreset(preset: AppFontPreset) {
+        viewModelScope.launch {
+            settingsDataStore.updateAppFontPreset(preset)
         }
     }
 
@@ -212,6 +239,10 @@ class SettingsViewModel(
                 }
                 input.use { stream ->
                     repository.restoreFromBackup(stream) { novelId, bytes -> saveRestoredCover(coversDir, novelId, bytes) }
+                }
+                withContext(Dispatchers.IO) {
+                    repository.pruneOrphanedStats()
+                    audioRepository?.pruneOrphanedListeningStats()
                 }
                 val duration = System.currentTimeMillis() - startTime
                 AppLogger.i("Backup", "importBackup completed successfully in ${duration}ms")

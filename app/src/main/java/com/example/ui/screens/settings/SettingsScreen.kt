@@ -68,7 +68,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val logSize by viewModel.logSizeText.collectAsStateWithLifecycle()
-    val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
+    val appAppearance by viewModel.appAppearance.collectAsStateWithLifecycle()
     var showResetDialog by remember { mutableStateOf(false) }
     var showClearLogDialog by remember { mutableStateOf(false) }
 
@@ -123,39 +123,22 @@ fun SettingsScreen(
                     SettingsSectionOverline("APPEARANCE & READING")
                 }
 
-                // App Colors Card (Material You)
+                // App Appearance Card (Theme Mode, Matte Dark Palettes & Material You)
                 item {
-                    val dynamicSupported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
-                    SettingsCard {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                                Text(
-                                    text = "Material You colors",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = if (dynamicSupported) {
-                                        "Match the palette to your wallpaper instead of Warm Editorial Jade."
-                                    } else {
-                                        "Requires Android 12 or newer."
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = dynamicColor && dynamicSupported,
-                                onCheckedChange = { viewModel.updateDynamicColor(it) },
-                                enabled = dynamicSupported,
-                                modifier = Modifier.testTag("settings_dynamic_color_switch")
-                            )
-                        }
-                    }
+                    AppAppearanceCard(
+                        appearance = appAppearance,
+                        onSelectThemeMode = { viewModel.updateAppThemeMode(it) },
+                        onSelectMattePalette = { viewModel.updateMattePalette(it) },
+                        onToggleDynamicColor = { viewModel.updateDynamicColor(it) }
+                    )
+                }
+
+                // App Text Font Card (Overall UI Typography, independent of Reader)
+                item {
+                    AppTypographyCard(
+                        selectedPreset = appAppearance.fontPreset,
+                        onSelectPreset = { viewModel.updateAppFontPreset(it) }
+                    )
                 }
 
                 // Reading Defaults Card

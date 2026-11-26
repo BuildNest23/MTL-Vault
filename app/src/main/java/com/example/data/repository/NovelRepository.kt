@@ -698,4 +698,9 @@ class NovelRepository(
     val totalChaptersCount: Flow<Int> = chapterDao.getTotalChapterCount()
     val totalReadChaptersCount: Flow<Int> = chapterDao.getTotalReadChapterCount()
     val totalWordCount: Flow<Long> = chapterDao.getTotalWordCount()
+
+    /** Removes any orphaned chapters whose novel is no longer in the database. */
+    suspend fun pruneOrphanedStats(): Int = withContext(Dispatchers.IO) {
+        chapterDao.deleteOrphanedChapters()
+    }
 }

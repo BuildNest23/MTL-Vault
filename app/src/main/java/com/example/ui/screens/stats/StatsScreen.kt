@@ -1,5 +1,6 @@
 package com.example.ui.screens.stats
 
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,7 +25,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -32,13 +37,17 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -50,12 +59,22 @@ import com.example.ui.components.MtlTopBar
 fun StatsScreen(
     viewModel: StatsViewModel
 ) {
+    val context = LocalContext.current
     val totalNovels by viewModel.totalNovels.collectAsStateWithLifecycle()
     val totalChapters by viewModel.totalChapters.collectAsStateWithLifecycle()
     val totalRead by viewModel.totalReadChapters.collectAsStateWithLifecycle()
     val totalWords by viewModel.totalWords.collectAsStateWithLifecycle()
     val novels by viewModel.novels.collectAsStateWithLifecycle()
     val audio by viewModel.audio.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is StatsEvent.ShowToast -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     val approxMinutes = (totalWords / 180).toInt()
     val approxHours = String.format("%.1f", approxMinutes / 60.0)
@@ -269,6 +288,60 @@ fun StatsScreen(
 
                 // Audiobook Listening Section
                 audioStatsItems(audio)
+
+                // End-of-tab Refresh Stats Footer
+                item {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp)
+                            .testTag("stats_refresh_card"),
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Stats reflect only novels and audiobooks currently in your library.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            FilledTonalButton(
+                                onClick = { viewModel.refreshStats() },
+                                enabled = !isRefreshing,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("stats_refresh_button")
+                            ) {
+                                if (isRefreshing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text("Refreshing Stats…", style = MaterialTheme.typography.labelLarge)
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Refresh Stats", style = MaterialTheme.typography.labelLarge)
+                                }
+                            }
+                        }
+                    }
+                }
 
                 item {
                     Spacer(modifier = Modifier.height(24.dp))

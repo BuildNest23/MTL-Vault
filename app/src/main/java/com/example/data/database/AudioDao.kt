@@ -236,6 +236,13 @@ abstract class AudioDao {
         addToListeningRow(id, bookTitle, listenedMs.coerceAtLeast(0L), bookMs.coerceAtLeast(0L), now)
     }
 
+    @Query("DELETE FROM audio_listening WHERE bookId = :bookId")
+    abstract suspend fun deleteListeningForBook(bookId: String): Int
+
+    /** Deletes listening history rows belonging to audiobooks that are no longer in the app. */
+    @Query("DELETE FROM audio_listening WHERE bookId NOT IN (SELECT id FROM audio_books)")
+    abstract suspend fun deleteOrphanedListening(): Int
+
     // ------------------------------------------------------- Combined changes
 
     /**
@@ -261,5 +268,12 @@ abstract class AudioDao {
     open suspend fun replaceChapters(bookId: String, chapters: List<AudioChapterEntity>) {
         deleteChaptersForBook(bookId)
         insertChapters(chapters)
+    }
+
+    /** Deletes an audiobook along with its saved listening stats in one atomic transaction. */
+    @Transaction
+    open suspend fun deleteBookAndStats(bookId: String) {
+        deleteListeningForBook(bookId)
+        deleteBook(bookId)
     }
 }

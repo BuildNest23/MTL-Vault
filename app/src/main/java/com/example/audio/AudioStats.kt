@@ -54,8 +54,11 @@ object AudioStatsCalculator {
         books: List<AudioBookEntity>,
         todayEpoch: Long
     ): AudioStatsSummary {
+        val liveBooksById = books.associateBy { it.id }
+        val activeRows = rows.filter { it.bookId in liveBooksById }
+
         val perDay = HashMap<Long, Long>()
-        for (row in rows) {
+        for (row in activeRows) {
             perDay[row.dayEpoch] = (perDay[row.dayEpoch] ?: 0L) + row.listenedMs.coerceAtLeast(0L)
         }
 
@@ -64,21 +67,22 @@ object AudioStatsCalculator {
             DayListening(day, perDay[day] ?: 0L)
         }
 
-        val totalListened = rows.sumOf { it.listenedMs.coerceAtLeast(0L) }
-        val totalBookMs = rows.sumOf { it.bookMs.coerceAtLeast(0L) }
+        val totalListened = activeRows.sumOf { it.listenedMs.coerceAtLeast(0L) }
+        val totalBookMs = activeRows.sumOf { it.bookMs.coerceAtLeast(0L) }
         val averageSpeed = if (totalListened > 0L && totalBookMs > 0L) {
             (totalBookMs.toDouble() / totalListened.toDouble()).toFloat().coerceIn(0.5f, 3.0f)
         } else {
             1.0f
         }
 
-        // One entry per book. The title of the newest row wins, so a renamed book shows its new name.
-        val perBook = rows
+        // One entry per live book. Prefer the live book title so renames show up immediately.
+        val perBook = activeRows
             .groupBy { it.bookId }
             .map { (bookId, bookRows) ->
+                val liveTitle = liveBooksById[bookId]?.title?.takeIf { it.isNotBlank() }
                 BookListening(
                     bookId = bookId,
-                    title = bookRows.maxByOrNull { it.dayEpoch }?.bookTitle.orEmpty(),
+                    title = liveTitle ?: bookRows.maxByOrNull { it.dayEpoch }?.bookTitle.orEmpty(),
                     listenedMs = bookRows.sumOf { it.listenedMs.coerceAtLeast(0L) }
                 )
             }

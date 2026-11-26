@@ -11,6 +11,10 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.model.ReaderSettings
+import com.example.ui.theme.AppAppearance
+import com.example.ui.theme.AppFontPreset
+import com.example.ui.theme.AppThemeMode
+import com.example.ui.theme.MattePalette
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
@@ -40,6 +44,9 @@ class SettingsDataStore(private val context: Context) {
         val HIDE_READ_CHAPTERS = booleanPreferencesKey("hide_read_chapters")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val LIBRARY_GRID_COLUMNS = intPreferencesKey("library_grid_columns")
+        val APP_THEME_MODE = stringPreferencesKey("app_theme_mode")
+        val APP_MATTE_PALETTE = stringPreferencesKey("app_matte_palette")
+        val APP_FONT_PRESET = stringPreferencesKey("app_font_preset")
     }
 
     val settingsFlow: Flow<ReaderSettings> = context.dataStore.data
@@ -107,8 +114,45 @@ class SettingsDataStore(private val context: Context) {
             (preferences[PreferencesKeys.LIBRARY_GRID_COLUMNS] ?: 2).coerceIn(2, 3)
         }
 
+    val appAppearanceFlow: Flow<AppAppearance> = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw exception
+            }
+        }
+        .map { preferences ->
+            AppAppearance(
+                themeMode = AppThemeMode.fromKey(preferences[PreferencesKeys.APP_THEME_MODE]),
+                mattePalette = MattePalette.fromKey(preferences[PreferencesKeys.APP_MATTE_PALETTE]),
+                fontPreset = AppFontPreset.fromKey(preferences[PreferencesKeys.APP_FONT_PRESET]),
+                dynamicColor = preferences[PreferencesKeys.DYNAMIC_COLOR] ?: false
+            )
+        }
+
     suspend fun updateDynamicColor(enabled: Boolean) {
         context.dataStore.edit { it[PreferencesKeys.DYNAMIC_COLOR] = enabled }
+    }
+
+    suspend fun updateAppThemeMode(mode: AppThemeMode) {
+        context.dataStore.edit { it[PreferencesKeys.APP_THEME_MODE] = mode.key }
+    }
+
+    suspend fun updateMattePalette(palette: MattePalette) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferencesKeys.APP_MATTE_PALETTE] = palette.key
+            // Turning off Material You lets the chosen matte palette take effect immediately
+            prefs[PreferencesKeys.DYNAMIC_COLOR] = false
+            // If the user explicitly forced Light mode, switch to Matte Dark so their choice is visible right away
+            if (prefs[PreferencesKeys.APP_THEME_MODE] == AppThemeMode.LIGHT.key) {
+                prefs[PreferencesKeys.APP_THEME_MODE] = AppThemeMode.DARK.key
+            }
+        }
+    }
+
+    suspend fun updateAppFontPreset(preset: AppFontPreset) {
+        context.dataStore.edit { it[PreferencesKeys.APP_FONT_PRESET] = preset.key }
     }
 
     suspend fun updateLibraryGridColumns(columns: Int) {

@@ -323,7 +323,8 @@ fun MtlVaultNavGraph(
                         SettingsViewModel(
                             repository = application.novelRepository,
                             settingsDataStore = application.settingsDataStore,
-                            ttsManager = application.ttsManager
+                            ttsManager = application.ttsManager,
+                            audioRepository = application.audioRepository
                         )
                     }
                 )

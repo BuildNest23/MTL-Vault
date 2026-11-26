@@ -55,8 +55,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.NovelSummary
 import com.example.ui.theme.EditorialBookplatePalettes
-import com.example.ui.theme.LoraFontFamily
-import com.example.ui.theme.PlayfairDisplayFontFamily
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -174,10 +172,11 @@ fun EditorialBookCover(
                 ) {
                     Text(
                         text = monogram,
-                        fontFamily = PlayfairDisplayFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = if (miniThumbnail) 13.sp else if (compactBookplate) 22.sp else 30.sp,
-                        letterSpacing = if (miniThumbnail) 0.5.sp else 1.sp,
+                        style = MaterialTheme.typography.displaySmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = if (miniThumbnail) 13.sp else if (compactBookplate) 22.sp else 30.sp,
+                            letterSpacing = if (miniThumbnail) 0.5.sp else 1.sp
+                        ),
                         color = Color(0xFFF6ECDA).copy(alpha = 0.92f)
                     )
                     if (!compactBookplate && !miniThumbnail && author.isNotBlank()) {
@@ -191,8 +190,7 @@ fun EditorialBookCover(
                         Spacer(modifier = Modifier.height(5.dp))
                         Text(
                             text = author,
-                            fontFamily = LoraFontFamily,
-                            fontSize = 10.sp,
+                            style = MaterialTheme.typography.titleMedium.copy(fontSize = 10.sp),
                             color = Color(0xFFF6ECDA).copy(alpha = 0.72f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -283,10 +281,11 @@ fun NovelCoverCard(
                 Text(
                     text = novel.title.ifBlank { "Untitled" },
                     color = Color(0xFFFAF6EE),
-                    fontFamily = LoraFontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 12.sp,
-                    lineHeight = 15.sp,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp
+                    ),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )

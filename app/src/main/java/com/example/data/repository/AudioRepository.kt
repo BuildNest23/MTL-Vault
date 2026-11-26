@@ -88,8 +88,8 @@ class AudioRepository(
         )
     }
 
-    /** Removes the book from the app. The audio files on the phone are left alone. */
-    suspend fun deleteBook(bookId: String) = audioDao.deleteBook(bookId)
+    /** Removes the book and its listening stats from the app. The audio files on the phone are left alone. */
+    suspend fun deleteBook(bookId: String) = audioDao.deleteBookAndStats(bookId)
 
     suspend fun updateDetails(bookId: String, title: String, author: String, narrator: String) {
         val cleanTitle = title.trim()
@@ -262,6 +262,9 @@ class AudioRepository(
             now = now
         )
     }
+
+    /** Removes any listening history rows for audiobooks that are no longer in the library. */
+    suspend fun pruneOrphanedListeningStats(): Int = audioDao.deleteOrphanedListening()
 
     // ============================================================ Pure helpers
 

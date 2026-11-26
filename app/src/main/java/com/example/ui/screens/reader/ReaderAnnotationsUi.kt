@@ -60,7 +60,6 @@ import com.example.data.database.entities.NovelAnnotationEntity
 import com.example.data.model.ChapterSummary
 import com.example.ui.components.EmptyState
 import com.example.ui.theme.EditorialHighlightSwatches
-import com.example.ui.theme.LoraFontFamily
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -156,8 +155,10 @@ fun AnnotationEditorSheet(
                         )
                         Text(
                             text = "“$quoteText”",
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontFamily = LoraFontFamily,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
+                                fontWeight = FontWeight.Normal,
                                 fontStyle = FontStyle.Italic
                             ),
                             color = MaterialTheme.colorScheme.onSurface,
@@ -453,10 +454,10 @@ fun ReaderAnnotationsList(
                                     )
                                     Text(
                                         text = ann.quoteText,
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontFamily = LoraFontFamily,
+                                        style = MaterialTheme.typography.titleMedium.copy(
                                             fontSize = 14.sp,
-                                            lineHeight = 20.sp
+                                            lineHeight = 20.sp,
+                                            fontWeight = FontWeight.Normal
                                         ),
                                         color = MaterialTheme.colorScheme.onSurface,
                                         maxLines = 3,

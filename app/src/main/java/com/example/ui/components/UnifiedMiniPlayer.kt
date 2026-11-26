@@ -51,7 +51,6 @@ import androidx.compose.ui.unit.sp
 import com.example.audio.AudioFormat
 import com.example.audio.NowPlayingSource
 import com.example.audio.NowPlayingState
-import com.example.ui.theme.LoraFontFamily
 
 /**
  * Unified editorial mini-player that floats above the bottom bar (or at the bottom edge of
@@ -146,8 +145,9 @@ fun UnifiedMiniPlayer(
                         ) {
                             Text(
                                 text = state.title,
-                                style = MaterialTheme.typography.titleSmall.copy(
-                                    fontFamily = LoraFontFamily,
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontSize = 14.sp,
+                                    lineHeight = 19.sp,
                                     fontWeight = FontWeight.SemiBold
                                 ),
                                 color = MaterialTheme.colorScheme.onSurface,

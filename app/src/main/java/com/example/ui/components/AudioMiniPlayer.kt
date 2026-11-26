@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -25,7 +26,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.PlayfairDisplayFontFamily
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -110,9 +110,10 @@ fun AudioCover(
                 Text(
                     text = initialsOf(title),
                     color = Color(0xFFF6ECDA).copy(alpha = 0.92f),
-                    fontFamily = PlayfairDisplayFontFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = initialsSize.sp
+                    style = MaterialTheme.typography.displaySmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = initialsSize.sp
+                    )
                 )
             }
         }

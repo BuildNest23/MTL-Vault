@@ -93,13 +93,16 @@ interface ChapterDao {
     @Query("DELETE FROM chapters")
     suspend fun deleteAllChapters()
 
-    @Query("SELECT COUNT(*) FROM chapters")
+    @Query("DELETE FROM chapters WHERE novelId NOT IN (SELECT id FROM novels)")
+    suspend fun deleteOrphanedChapters(): Int
+
+    @Query("SELECT COUNT(*) FROM chapters WHERE novelId IN (SELECT id FROM novels)")
     fun getTotalChapterCount(): Flow<Int>
 
-    @Query("SELECT COUNT(*) FROM chapters WHERE read = 1")
+    @Query("SELECT COUNT(*) FROM chapters WHERE read = 1 AND novelId IN (SELECT id FROM novels)")
     fun getTotalReadChapterCount(): Flow<Int>
 
-    @Query("SELECT COALESCE(SUM(wordCount), 0) FROM chapters")
+    @Query("SELECT COALESCE(SUM(wordCount), 0) FROM chapters WHERE novelId IN (SELECT id FROM novels)")
     fun getTotalWordCount(): Flow<Long>
 
     @Query(
